@@ -25,7 +25,10 @@ export default defineConfig({
         target: 'ws://127.0.0.1:18789',
         ws: true,
         changeOrigin: true,
-        rewrite: () => '/'
+        rewrite: () => '/',
+        headers: {
+          Origin: 'http://127.0.0.1:18789'
+        }
       }
     }
   }
