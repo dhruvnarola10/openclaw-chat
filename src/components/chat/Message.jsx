@@ -12,24 +12,54 @@ import remarkGfm from 'remark-gfm';
 import { mdComponents } from './markdown.jsx';
 import MessageAttachments from './MessageAttachments.jsx';
 
-// Some models emit XML-ish control tags like <think>...</think> or
-// <final>...</final> alongside the user-facing content. react-markdown
-// (without rehype-raw) silently consumes unknown HTML tags — including
-// any text up to the next `>`. The result: messages mysteriously
-// truncate or start with stray "<think" prefixes.
+// Some models emit XML-ish control tags inline with the user-facing content.
+// Two distinct cases that need different treatment:
 //
-// Strip the recognized control tags wholesale, then trim any unclosed
-// trailing fragment (which appears mid-stream while streaming).
+//   • <think>, <reasoning>, <analysis>, <scratchpad> — internal model
+//     monologue. STRIP the tag AND its content.
+//
+//   • <final>, <answer>, <response>, <output> — the actual user-facing
+//     answer (gpt-oss / harmony format wraps the response in <final>).
+//     UNWRAP these — keep the inner text, drop the tags.
+//
+// Without this, react-markdown silently eats unknown HTML tags up to the
+// next `>` and the message mysteriously goes blank or starts with "<final".
+const REASONING_TAGS = ['think', 'reasoning', 'analysis', 'scratchpad'];
+const ANSWER_TAGS    = ['final', 'answer', 'response', 'output'];
+
 function cleanContent(text) {
   if (!text) return text;
-  let s = text
-    .replace(/<think\b[^>]*>[\s\S]*?<\/think\s*>/gi, '')
-    .replace(/<reasoning\b[^>]*>[\s\S]*?<\/reasoning\s*>/gi, '')
-    .replace(/<final\b[^>]*>[\s\S]*?<\/final\s*>/gi, '')
-    .replace(/<analysis\b[^>]*>[\s\S]*?<\/analysis\s*>/gi, '')
-    .replace(/<scratchpad\b[^>]*>[\s\S]*?<\/scratchpad\s*>/gi, '');
-  // Mid-stream: trailing unclosed control tag (e.g. "<think" while still streaming)
-  s = s.replace(/<\/?(?:think|reasoning|final|analysis|scratchpad)\b[^>]*$/i, '');
+  let s = text;
+
+  // 1. Strip matched reasoning blocks (with their content).
+  for (const tag of REASONING_TAGS) {
+    const re = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}\\s*>`, 'gi');
+    s = s.replace(re, '');
+  }
+
+  // 2. Mid-stream: a reasoning tag opened but not yet closed — hide
+  //    everything from the open tag to the end of the buffer.
+  for (const tag of REASONING_TAGS) {
+    const re = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*$`, 'i');
+    s = s.replace(re, '');
+    // Also handle the case where the open tag itself isn't fully written:
+    // "<thi" -> strip from the "<" onward.
+    const partial = new RegExp(`<${tag.slice(0, 3)}[a-z]*$`, 'i');
+    s = s.replace(partial, '');
+  }
+
+  // 3. Unwrap answer tags — keep the inner text.
+  for (const tag of ANSWER_TAGS) {
+    const matched = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}\\s*>`, 'gi');
+    s = s.replace(matched, '$1');
+  }
+
+  // 4. Strip orphan answer-tag opens/closes (mid-stream or unbalanced).
+  for (const tag of [...ANSWER_TAGS, ...REASONING_TAGS]) {
+    const orphan = new RegExp(`<\\/?${tag}\\b[^>]*>`, 'gi');
+    s = s.replace(orphan, '');
+  }
+
   return s;
 }
 
