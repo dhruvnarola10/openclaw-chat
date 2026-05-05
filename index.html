@@ -3,7 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenClaw Chat</title>
+    <title>Leonardo AI</title>
+    <script>
+      // Inline theme bootstrap — runs before any CSS paints to avoid
+      // a flash of the wrong theme. Reads the same key as src/hooks/useTheme.js.
+      (function () {
+        try {
+          var t = localStorage.getItem('leo-theme');
+          if (t !== 'light' && t !== 'dark' && t !== 'system') t = 'dark';
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (_) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
