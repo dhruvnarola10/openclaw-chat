@@ -1,46 +1,67 @@
-// Model list — locked to OpenClaw routing values only.
+// Model list — pulled from the gateway via `models.list` (WS).
 //
-// Per the OpenResponses spec, the request body's `model` field MUST be
-// `"openclaw"`, `"openclaw/default"`, or `"openclaw/<agentId>"`. Showing
-// the provider-specific list (e.g. `gpt-oss:120b-cloud`) led to 400s
-// because the gateway rejects non-routing values in the body. We expose
-// only the safe routing options here and let OpenClaw decide which
-// provider model to use behind the scenes.
+// In direct-WS chat mode we patch the chosen model onto the session via
+// `sessions.patch` before sending, so any provider model the gateway
+// exposes is selectable. The HTTP fallback path requires a routing-style
+// id (`openclaw` / `openclaw/<agentId>`), so we always offer those at
+// the top of the list as safe defaults.
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
+const ROUTING_FALLBACK = (agentId) => {
+  const out = [
+    { id: 'openclaw',         label: 'openclaw (default routing)' },
+    { id: 'openclaw/default', label: 'openclaw/default' },
+  ];
+  if (agentId && agentId !== 'default') {
+    out.push({ id: `openclaw/${agentId}`, label: `openclaw/${agentId}` });
+  }
+  return out;
+};
 
 export function useModels({ agentId, model, setModel }) {
-  const models = useMemo(() => {
-    const base = [
-      { id: 'openclaw',         label: 'openclaw (default routing)' },
-      { id: 'openclaw/default', label: 'openclaw/default' },
-    ];
-    if (agentId && agentId !== 'default' && agentId !== 'main') {
-      base.push({ id: `openclaw/${agentId}`, label: `openclaw/${agentId}` });
-    } else if (agentId === 'main') {
-      base.push({ id: 'openclaw/main', label: 'openclaw/main' });
-    }
-    return base;
-  }, [agentId]);
+  const [wsModels, setWsModels] = useState([]);
 
-  // Reset selection if the persisted value is something the gateway
-  // would now reject (e.g. an old provider-specific id like gpt-oss:...).
+  const models = useMemo(() => {
+    const seen = new Set();
+    const out  = [];
+    for (const m of [...wsModels, ...ROUTING_FALLBACK(agentId)]) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push(m);
+    }
+    return out;
+  }, [wsModels, agentId]);
+
+  // Reset selection if persisted value disappeared from the new list.
   useEffect(() => {
     if (!model || !models.find((m) => m.id === model)) {
       setModel(models[0].id);
     }
   }, [model, models, setModel]);
 
-  // Refresh / WS-overlay are no-ops in this simplified mode, but kept as
-  // stable callbacks so existing call sites don't have to change.
+  // Receives the gateway's `models.list` payload.
+  const setModelsFromWs = useCallback((wsRaw) => {
+    if (!Array.isArray(wsRaw)) return;
+    const mapped = wsRaw
+      .filter((m) => m?.id || m?.name)
+      .map((m) => ({
+        id:    String(m.id ?? m.name),
+        label: m.alias
+          ? `${m.name ?? m.id} (${m.alias})`
+          : String(m.name ?? m.id),
+      }));
+    setWsModels(mapped);
+  }, []);
+
   const noop = useCallback(() => {}, []);
 
   return {
     models,
-    loading:           false,
-    error:             '',
-    refresh:           noop,
-    setModelsFromWs:   noop,
-    setGatewayRequest: noop,
+    loading: false,
+    error:   '',
+    refresh: noop,
+    setModelsFromWs,
+    setGatewayRequest: noop, // legacy interface
   };
 }

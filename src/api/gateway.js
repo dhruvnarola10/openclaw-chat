@@ -18,13 +18,14 @@ const RECONNECT_DELAY_MS = 5_000;
 const AUTH_FALLBACK_MS = 3_000;
 
 export class Gateway {
-  constructor({ url, getToken, onStatus, onEvent, onSessions, onModels }) {
+  constructor({ url, getToken, onStatus, onEvent, onSessions, onModels, onChat }) {
     this.url        = url;
     this.getToken   = getToken;
     this.onStatus   = onStatus    || noop;
     this.onEvent    = onEvent     || noop;
     this.onSessions = onSessions  || noop;
     this.onModels   = onModels    || noop;
+    this.onChat     = onChat      || noop;
 
     this.socket    = null;
     this.connecting = false;
@@ -136,7 +137,10 @@ export class Gateway {
           maxProtocol: PROTO_MAX,
           client: { id: 'openclaw-control-ui', version: '1.0.0', platform: 'web', mode: 'ui' },
           auth:   { token: this.getToken() },
-          scopes: ['operator.read', 'operator.write'],
+          // operator.admin is required for `sessions.patch` (model override),
+          // `cron.add/update/remove`, and `skills.install/update`. Without it
+          // the gateway returns: missing scope: operator.admin.
+          scopes: ['operator.read', 'operator.write', 'operator.admin'],
         },
       }));
       return;
@@ -152,13 +156,26 @@ export class Gateway {
     if (msg.type === 'res' && this.pending.has(msg.id)) {
       const { resolve, reject } = this.pending.get(msg.id);
       this.pending.delete(msg.id);
-      msg.ok ? resolve(msg.payload) : reject(new Error(msg.payload?.message ?? 'Gateway error'));
+      if (msg.ok) {
+        resolve(msg.payload);
+      } else {
+        // OpenClaw puts errors under `msg.error.{code,message}` in v3 protocol;
+        // older versions put them under `msg.payload`. Check both, plus
+        // include the error code so users can grep for it.
+        const err = msg.error ?? msg.payload ?? {};
+        const message = err.message ?? err.error ?? msg.message ?? 'Gateway error';
+        const code    = err.code ?? msg.code;
+        const e = new Error(code ? `${code}: ${message}` : message);
+        e.code = code;
+        e.payload = err;
+        reject(e);
+      }
       return;
     }
 
     // 4. Generic error response (no matching pending request).
     if (msg.type === 'res' && !msg.ok) {
-      console.warn('[gateway] error response:', msg.payload ?? msg);
+      console.warn('[gateway] error response:', msg.error ?? msg.payload ?? msg);
       return;
     }
 
@@ -176,7 +193,13 @@ export class Gateway {
       return;
     }
 
-    // 7. Server events — refresh sessions on any event after auth.
+    // 7. Chat-stream events — broadcast to per-session subscribers.
+    if (msg.type === 'event' && msg.event === 'chat' && msg.payload) {
+      this.onChat(msg.payload);
+      return;
+    }
+
+    // 8. Server events — refresh sessions on any event after auth.
     if (msg.type === 'event') {
       this.onEvent(msg);
       if (this.authed) this.send('sessions.list');

@@ -59,15 +59,16 @@ export default function CronView({ gateway }) {
                     const next = j.nextRunAt ?? j.nextWakeAt ?? j.next ?? j.runAt;
                     const last = j.lastRunAt ?? j.lastRun ?? j.lastAt;
                     const status = (j.status ?? (j.enabled === false ? 'disabled' : 'active')).toLowerCase();
+                    const scheduleStr = formatSchedule(j.schedule ?? j.cron ?? j.spec);
                     return (
                       <tr key={id}>
                         <td>
                           <div className="page-stack">
-                            <span className="page-strong">{j.name ?? id}</span>
-                            {j.name && id && j.name !== id && <code className="page-mono">{id}</code>}
+                            <span className="page-strong">{String(j.name ?? id ?? '—')}</span>
+                            {j.name && id && j.name !== id && <code className="page-mono">{String(id)}</code>}
                           </div>
                         </td>
-                        <td><code className="page-mono">{j.schedule ?? j.cron ?? '—'}</code></td>
+                        <td><code className="page-mono">{scheduleStr}</code></td>
                         <td>
                           <span className={`status-chip status-chip--${status}`}>{status}</span>
                         </td>
@@ -89,4 +90,21 @@ export default function CronView({ gateway }) {
       </section>
     </div>
   );
+}
+
+// OpenClaw schedule field can be either a plain cron string or a tagged
+// object like { kind: "cron", expr: "0 0 * * *" } / { kind: "interval", ms: 60000 }.
+// Normalise to a printable string.
+function formatSchedule(s) {
+  if (s == null) return '—';
+  if (typeof s === 'string') return s;
+  if (typeof s === 'object') {
+    if (s.expr) return String(s.expr);
+    if (s.ms != null) return `every ${s.ms}ms`;
+    if (s.seconds != null) return `every ${s.seconds}s`;
+    if (s.minutes != null) return `every ${s.minutes}m`;
+    if (s.kind) return String(s.kind);
+    try { return JSON.stringify(s); } catch { return '[object]'; }
+  }
+  return String(s);
 }

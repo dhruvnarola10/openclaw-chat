@@ -143,9 +143,73 @@ export default function Message({ msg, expanded, setExpanded }) {
             {msg.streaming && <span className="cursor" />}
           </div>
         )}
+        {!msg.streaming && !msg.isError && (msg.model || msg.usage) && (
+          <MessageMeta usage={msg.usage} model={msg.model} stopReason={msg.stopReason} />
+        )}
       </div>
     </div>
   );
+}
+
+// Meta row mirroring OpenClaw's built-in dashboard:
+//   ↑3.5k  ↓349  R20.3k  18% ctx  gpt-oss:120b-cloud
+function MessageMeta({ usage, model, stopReason }) {
+  const u = normalizeUsage(usage);
+  const items = [];
+
+  if (u.input  != null) items.push({ key: 'in',  label: '↑', value: compact(u.input) });
+  if (u.output != null) items.push({ key: 'out', label: '↓', value: compact(u.output) });
+  if (u.cacheRead != null && u.cacheRead > 0) {
+    items.push({ key: 'cache', label: 'R', value: compact(u.cacheRead) });
+  }
+  if (u.contextPct != null) {
+    items.push({ key: 'ctx', label: '', value: `${u.contextPct}% ctx` });
+  }
+
+  if (!items.length && !model && !stopReason) return null;
+
+  return (
+    <div className="msg-meta">
+      {items.map((it) => (
+        <span key={it.key} className="msg-meta-tok">
+          {it.label && <span className="msg-meta-arrow">{it.label}</span>}
+          <span>{it.value}</span>
+        </span>
+      ))}
+      {model && <code className="msg-meta-model">{model}</code>}
+      {stopReason && stopReason !== 'stop' && stopReason !== 'end_turn' && (
+        <span className="msg-meta-stop">stop: {stopReason}</span>
+      )}
+    </div>
+  );
+}
+
+// Pull token counts out of the various shapes the gateway/HTTP API ship.
+function normalizeUsage(u) {
+  if (!u || typeof u !== 'object') return {};
+  const input  = pick(u, ['inputTokens', 'input_tokens',  'input',  'promptTokens',     'prompt_tokens']);
+  const output = pick(u, ['outputTokens','output_tokens', 'output', 'completionTokens', 'completion_tokens']);
+  const cacheRead  = pick(u, ['cacheRead',  'cache_read',  'cacheReadTokens']);
+  const cacheWrite = pick(u, ['cacheWrite', 'cache_write', 'cacheWriteTokens']);
+  const totalTokens = pick(u, ['totalTokens', 'total_tokens', 'total']);
+  const contextPct  = pick(u, ['contextPct', 'context_percent', 'ctxPct', 'utilization']);
+  return { input, output, cacheRead, cacheWrite, totalTokens, contextPct };
+}
+
+function pick(obj, keys) {
+  for (const k of keys) {
+    if (obj[k] != null) return Number(obj[k]);
+  }
+  return null;
+}
+
+// 3500 → "3.5k", 349 → "349", 20300 → "20.3k", 1200000 → "1.2M"
+function compact(n) {
+  if (n == null) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (abs >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
 }
 
 // ── Inline pieces ─────────────────────────────────────────────────────

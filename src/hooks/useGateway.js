@@ -21,6 +21,22 @@ export function useGateway({ tokenRef, onModelsList }) {
     setEvents((prev) => [{ ts: Date.now(), kind, summary, meta }, ...prev].slice(0, MAX_EVENTS));
   }, []);
 
+  // Chat-stream subscribers: sessionKey → Set<handler>. Used by useChat
+  // to receive `event: "chat"` deltas for an in-flight `chat.send`.
+  const chatSubsRef = useRef(new Map());
+  const subscribeToChat = useCallback((sessionKey, handler) => {
+    let set = chatSubsRef.current.get(sessionKey);
+    if (!set) {
+      set = new Set();
+      chatSubsRef.current.set(sessionKey, set);
+    }
+    set.add(handler);
+    return () => {
+      set.delete(handler);
+      if (!set.size) chatSubsRef.current.delete(sessionKey);
+    };
+  }, []);
+
   // Build the gateway once and keep its callbacks stable via refs.
   if (!gatewayRef.current) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -51,8 +67,15 @@ export function useGateway({ tokenRef, onModelsList }) {
       },
       onEvent: (msg) => {
         // Only log named events, not every protocol frame.
-        if (msg.event && msg.event !== 'connect.challenge') {
+        if (msg.event && msg.event !== 'connect.challenge' && msg.event !== 'chat') {
           pushEvent('event', msg.event);
+        }
+      },
+      onChat: (payload) => {
+        const subs = chatSubsRef.current.get(payload.sessionKey);
+        if (!subs) return;
+        for (const h of subs) {
+          try { h(payload); } catch (e) { console.warn('[gateway] chat handler threw:', e); }
         }
       },
     });
@@ -94,7 +117,11 @@ export function useGateway({ tokenRef, onModelsList }) {
     [],
   );
 
-  return { status, sessions, events, loadingHistory, fetchHistory, reconnect, request };
+  return {
+    status, sessions, events, loadingHistory,
+    fetchHistory, reconnect, request,
+    subscribeToChat,
+  };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

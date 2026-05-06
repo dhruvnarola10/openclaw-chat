@@ -29,6 +29,7 @@ export default function ChatView({ config, models, threadOps, gateway }) {
     agentId: config.agentId,
     model:   config.model,
     stream:  config.stream,
+    gateway,
     threadOps,
   });
 

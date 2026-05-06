@@ -1,13 +1,15 @@
 // Right-side configuration drawer.
 
-import { RefreshCw, Trash2, X } from 'lucide-react';
+import { useState } from 'react';
+import { Eye, EyeOff, RefreshCw, Trash2, X } from 'lucide-react';
 import Select from '../common/Select.jsx';
 
 export default function SettingsPanel({
   config, models, status, onClose, onClearHistory,
 }) {
-  const { apiUrl, token, agentId, model, stream } = config;
+  const { token, agentId, model, stream } = config;
   const { list, loading, error, onRefresh } = models;
+  const [showToken, setShowToken] = useState(false);
 
   return (
     <aside className="settings">
@@ -16,22 +18,39 @@ export default function SettingsPanel({
         <button className="icon-btn" onClick={onClose}><X size={16} /></button>
       </div>
       <div className="settings-body">
+        {/* API URL — always /api/responses behind nginx, hidden from the
+            UI by default. Uncomment if you need to override at runtime.
         <Field label="API URL">
           <input
             type="text"
-            value={apiUrl}
+            value={config.apiUrl}
             onChange={(e) => config.setApiUrl(e.target.value)}
             placeholder="/api/responses"
           />
         </Field>
+        */}
 
         <Field label="Bearer Token">
-          <textarea
-            value={token}
-            onChange={(e) => config.setToken(e.target.value)}
-            rows={3}
-            placeholder="Enter bearer token"
-          />
+          <div className="token-input-wrap">
+            <input
+              className="token-input"
+              type={showToken ? 'text' : 'password'}
+              value={token}
+              onChange={(e) => config.setToken(e.target.value)}
+              placeholder="Enter bearer token"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="token-toggle"
+              onClick={() => setShowToken((v) => !v)}
+              title={showToken ? 'Hide token' : 'Show token'}
+              aria-label={showToken ? 'Hide token' : 'Show token'}
+            >
+              {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
         </Field>
 
         <Field label="Agent ID">
@@ -93,10 +112,6 @@ export default function SettingsPanel({
           >
             {stream ? 'Enabled' : 'Disabled'}
           </button>
-        </div>
-
-        <div className="env-note">
-          Defaults loaded from <code>.env</code>. Settings are saved to localStorage and override .env on reload.
         </div>
 
         <div className="status-card">

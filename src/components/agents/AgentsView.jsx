@@ -193,12 +193,35 @@ export default function AgentsView({ gateway, config }) {
 
 function normalizeAgent(a) {
   return {
-    id:           a.id ?? a.agentId ?? a.name,
-    name:         a.name ?? a.label ?? a.id,
-    model:        a.model ?? a.defaultModel ?? a.modelId,
-    status:       a.status ?? a.state ?? (a.disabled ? 'disabled' : 'on'),
-    description:  a.description,
+    id:           toStr(a.id ?? a.agentId ?? a.name),
+    name:         toStr(a.name ?? a.label ?? a.id),
+    model:        modelToStr(a.model ?? a.defaultModel ?? a.modelId ?? a.models),
+    status:       toStr(a.status ?? a.state ?? (a.disabled ? 'disabled' : 'on')),
+    description:  toStr(a.description),
     lastActivity: a.lastActivity ?? a.lastActivityAt ?? a.updatedAt,
-    nodeId:       a.nodeId,
+    nodeId:       toStr(a.nodeId),
   };
+}
+
+// Some agent payloads ship `model` as an object — e.g.
+//   { primary: "openai:gpt-4o", fallback: "anthropic:claude-3" }
+// or a tagged variant. Pull out a printable label.
+function modelToStr(m) {
+  if (m == null) return '';
+  if (typeof m === 'string') return m;
+  if (typeof m === 'object') {
+    return m.primary ?? m.id ?? m.name ?? m.model ?? m.default
+        ?? (Array.isArray(m) ? m.join(', ') : '');
+  }
+  return String(m);
+}
+
+function toStr(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'object') {
+    return v.id ?? v.name ?? v.label ?? v.text ?? '';
+  }
+  return String(v);
 }

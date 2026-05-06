@@ -15,8 +15,7 @@ export default function ChannelsView({ gateway }) {
     intervalMs: 30_000,
   });
 
-  const accounts = data?.channelAccounts ?? data?.accounts ?? data?.items
-                ?? (Array.isArray(data) ? data : []);
+  const accounts = flattenAccounts(data);
 
   const total   = accounts.length;
   const linked  = accounts.filter((a) => a.connected === true || a.linked === true).length;
@@ -84,7 +83,7 @@ export default function ChannelsView({ gateway }) {
 
             <ul className="channel-list">
               {list.map((a, i) => {
-                const id    = a.accountId ?? a.id ?? `acct-${i}`;
+                const id    = String(a.accountId ?? a.id ?? `acct-${i}`);
                 const ok    = a.connected === true || a.linked === true;
                 const state = a.lastError ? 'bad' : (ok ? 'good' : 'warn');
                 return (
@@ -96,18 +95,18 @@ export default function ChannelsView({ gateway }) {
                     </div>
                     <div className="channel-body">
                       <div className="channel-row-head">
-                        <span className="channel-name">{a.displayName ?? a.label ?? id}</span>
+                        <span className="channel-name">{asText(a.displayName ?? a.label ?? id)}</span>
                         <code className="page-mono">{id}</code>
                       </div>
                       <div className="channel-meta">
                         {a.tokenSource && (
-                          <span className="page-pill">token: {a.tokenSource}</span>
+                          <span className="page-pill">token: {asText(a.tokenSource)}</span>
                         )}
                         {a.configured === false && (
                           <span className="page-pill page-pill--warn">not configured</span>
                         )}
                         {a.lastError && (
-                          <span className="channel-error">{a.lastError}</span>
+                          <span className="channel-error">{asText(a.lastError)}</span>
                         )}
                         {a.lastSyncAt && (
                           <span className="channel-time">synced {ago(a.lastSyncAt)}</span>
@@ -128,4 +127,45 @@ export default function ChannelsView({ gateway }) {
       })}
     </div>
   );
+}
+
+// Some OpenClaw versions return channelAccounts as an array of records;
+// others return an object keyed by provider with arrays of accounts inside.
+// Normalise both shapes to a flat array.
+function flattenAccounts(data) {
+  if (!data) return [];
+
+  // array forms
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data.channelAccounts)) return data.channelAccounts;
+  if (Array.isArray(data.accounts))        return data.accounts;
+  if (Array.isArray(data.items))           return data.items;
+
+  // object-keyed-by-provider forms
+  const merged = [];
+  const obj = data.channelAccounts ?? data.accounts ?? data.providers ?? data;
+  if (obj && typeof obj === 'object') {
+    for (const [provider, val] of Object.entries(obj)) {
+      if (Array.isArray(val)) {
+        for (const a of val) merged.push({ ...a, provider: a.provider ?? provider });
+      } else if (val && typeof val === 'object') {
+        // single-account-per-provider shape
+        merged.push({ ...val, provider: val.provider ?? provider });
+      }
+    }
+  }
+  return merged;
+}
+
+// Coerce arbitrary server values to renderable strings. Handles the case
+// where lastError/tokenSource arrive as { code, message } objects.
+function asText(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'object') {
+    return v.message ?? v.text ?? v.label ?? v.code ?? v.kind
+        ?? (() => { try { return JSON.stringify(v); } catch { return '[object]'; } })();
+  }
+  return String(v);
 }
