@@ -8,14 +8,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+// Static routing options. Only the dynamic `openclaw/<agentId>` is kept;
+// the others ("openclaw" and "openclaw/default") are commented out because
+// the WS `models.list` already provides every real model the gateway can
+// route to. Uncomment if you ever want them back as picker entries.
 const ROUTING_FALLBACK = (agentId) => {
   const out = [
-    { id: 'openclaw',         label: 'openclaw (default routing)' },
-    { id: 'openclaw/default', label: 'openclaw/default' },
+    // { id: 'openclaw',         label: 'openclaw (default routing)' },
+    // { id: 'openclaw/default', label: 'openclaw/default' },
   ];
-  if (agentId && agentId !== 'default') {
-    out.push({ id: `openclaw/${agentId}`, label: `openclaw/${agentId}` });
-  }
+  // if (agentId && agentId !== 'default') {
+  //   out.push({ id: `openclaw/${agentId}`, label: `openclaw/${agentId}` });
+  // }
   return out;
 };
 

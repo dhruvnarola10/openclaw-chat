@@ -5,7 +5,7 @@
 //   – System command    → "system-bubble" with terminal icon + "system" tag
 //   – Error             → red-tinted assistant bubble
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Bot, Brain, ChevronDown, ChevronRight, Terminal } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -151,9 +151,12 @@ export default function Message({ msg, expanded, setExpanded }) {
   );
 }
 
-// Meta row mirroring OpenClaw's built-in dashboard:
-//   ↑3.5k  ↓349  R20.3k  18% ctx  gpt-oss:120b-cloud
+// Meta row mirroring OpenClaw's built-in dashboard. Collapsed by default —
+// click the "Context" pill to reveal tokens + model.
+//   collapsed:  > Context
+//   expanded:   v Context  ↑3.5k  ↓349  R20.3k  18% ctx  gpt-oss:120b-cloud
 function MessageMeta({ usage, model, stopReason }) {
+  const [open, setOpen] = useState(false);
   const u = normalizeUsage(usage);
   const items = [];
 
@@ -170,24 +173,44 @@ function MessageMeta({ usage, model, stopReason }) {
 
   return (
     <div className="msg-meta">
-      {items.map((it) => (
-        <span key={it.key} className="msg-meta-tok">
-          {it.label && <span className="msg-meta-arrow">{it.label}</span>}
-          <span>{it.value}</span>
-        </span>
-      ))}
-      {model && <code className="msg-meta-model">{model}</code>}
-      {stopReason && stopReason !== 'stop' && stopReason !== 'end_turn' && (
-        <span className="msg-meta-stop">stop: {stopReason}</span>
+      <button
+        type="button"
+        className={`msg-meta-toggle${open ? ' is-open' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        <span>Context</span>
+      </button>
+
+      {open && (
+        <>
+          {items.map((it) => (
+            <span key={it.key} className="msg-meta-tok">
+              {it.label && <span className="msg-meta-arrow">{it.label}</span>}
+              <span>{it.value}</span>
+            </span>
+          ))}
+          {model && <code className="msg-meta-model">{model}</code>}
+          {stopReason && stopReason !== 'stop' && stopReason !== 'end_turn' && (
+            <span className="msg-meta-stop">stop: {stopReason}</span>
+          )}
+        </>
       )}
     </div>
   );
 }
 
 // Pull token counts out of the various shapes the gateway/HTTP API ship.
+// `↑` shows cumulative input tokens (matches the built-in dashboard's
+// running context-window count); `↓` shows the current turn's output tokens.
 function normalizeUsage(u) {
   if (!u || typeof u !== 'object') return {};
-  const input  = pick(u, ['inputTokens', 'input_tokens',  'input',  'promptTokens',     'prompt_tokens']);
+  const input  = pick(u, [
+    'cumulativeTokens',          // sessions.usage.timeseries running total
+    'inputTokens', 'input_tokens', 'input',
+    'promptTokens', 'prompt_tokens',
+  ]);
   const output = pick(u, ['outputTokens','output_tokens', 'output', 'completionTokens', 'completion_tokens']);
   const cacheRead  = pick(u, ['cacheRead',  'cache_read',  'cacheReadTokens']);
   const cacheWrite = pick(u, ['cacheWrite', 'cache_write', 'cacheWriteTokens']);

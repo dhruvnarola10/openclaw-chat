@@ -147,6 +147,15 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
         model: resolvedModel ?? payload.model ?? m.model,
         stopReason: payload.stopReason ?? m.stopReason,
       }));
+      // The chat event's `usage` field is often empty — the official
+      // dashboard pulls token counts from sessions.usage.timeseries
+      // separately. Mirror that here so the meta row populates.
+      fetchSessionUsage(gateway, sessionKey)
+        .then((u) => {
+          if (!u) return;
+          threadOps.patchLast(threadId, (m) => ({ ...m, usage: { ...(m.usage || {}), ...u } }));
+        })
+        .catch(() => { /* silently ignore — already have what we have */ });
       cleanup();
       resolveDone();
     } else if (payload.state === 'aborted') {
@@ -263,4 +272,59 @@ async function sendViaHttp({
   threadOps.patchLast(threadId, (m) => ({
     ...m, streaming: false, thinkingStreaming: false, waiting: false,
   }));
+}
+
+// ── Usage backfill ─────────────────────────────────────────────────────
+//
+// The OpenClaw `chat` event has `usage?: unknown` — most builds leave it
+// empty. The built-in dashboard fetches `sessions.usage.timeseries` after
+// each turn and reads the latest point for {input, output, totalTokens,
+// cumulativeTokens, cost}. We mirror that here so the meta row populates.
+//
+// We pull both the timeseries and the cost rollup so we can compute the
+// "X% ctx" figure when the gateway exposes a model max-context.
+async function fetchSessionUsage(gateway, sessionKey) {
+  if (!gateway?.request) return null;
+
+  // Race a 4s timeout — usage data isn't worth blocking on.
+  const timeout = (p) => Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
+  ]);
+
+  let series = null;
+  try {
+    series = await timeout(gateway.request('sessions.usage.timeseries', { key: sessionKey }));
+  } catch { /* fall through */ }
+
+  // Newer builds expose `sessions.usage` with per-session totals.
+  let summary = null;
+  try {
+    summary = await timeout(gateway.request('sessions.usage', { key: sessionKey, limit: 1 }));
+  } catch { /* fall through */ }
+
+  const last  = series?.points?.[series.points.length - 1];
+  const entry = summary?.sessions?.find?.((s) => s.key === sessionKey)
+             ?? summary?.sessions?.[0];
+  const u     = entry?.usage ?? null;
+
+  // Prefer the last timeseries point for per-turn output, fall back to totals.
+  const out = {};
+  const input  = last?.input         ?? u?.input;
+  const output = last?.output        ?? u?.output;
+  const cacheR = last?.cacheRead     ?? u?.cacheRead;
+  const cacheW = last?.cacheWrite    ?? u?.cacheWrite;
+  const total  = last?.totalTokens   ?? u?.totalTokens;
+  const cumul  = last?.cumulativeTokens;
+  const ctxPct = entry?.usage?.contextPercent ?? entry?.contextWeight?.usagePercent;
+
+  if (input  != null) out.input  = Number(input);
+  if (output != null) out.output = Number(output);
+  if (cacheR != null) out.cacheRead  = Number(cacheR);
+  if (cacheW != null) out.cacheWrite = Number(cacheW);
+  if (total  != null) out.totalTokens      = Number(total);
+  if (cumul  != null) out.cumulativeTokens = Number(cumul);
+  if (ctxPct != null) out.contextPct = Math.round(Number(ctxPct));
+
+  return Object.keys(out).length ? out : null;
 }
