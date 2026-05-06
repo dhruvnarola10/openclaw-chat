@@ -31,10 +31,10 @@ function Authed() {
   const [view, setView] = useState('overview');
   const { theme, cycleTheme } = useTheme();
 
+  // agentId:  config.agentId,
   const config    = useConfig();
   const threadOps = useThreads({ agentId: config.agentId });
   const models    = useModels({
-    agentId:  config.agentId,
     model:    config.model,
     setModel: config.setModel,
   });

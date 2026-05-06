@@ -12,35 +12,41 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 // the others ("openclaw" and "openclaw/default") are commented out because
 // the WS `models.list` already provides every real model the gateway can
 // route to. Uncomment if you ever want them back as picker entries.
-const ROUTING_FALLBACK = (agentId) => {
-  const out = [
-    // { id: 'openclaw',         label: 'openclaw (default routing)' },
-    // { id: 'openclaw/default', label: 'openclaw/default' },
-  ];
-  // if (agentId && agentId !== 'default') {
-  //   out.push({ id: `openclaw/${agentId}`, label: `openclaw/${agentId}` });
-  // }
-  return out;
-};
+// const ROUTING_FALLBACK = (agentId) => {
+//   const out = [
+//     { id: 'openclaw',         label: 'openclaw (default routing)' },
+//     { id: 'openclaw/default', label: 'openclaw/default' },
+//   ];
+//   if (agentId && agentId !== 'default') {
+//     out.push({ id: `openclaw/${agentId}`, label: `openclaw/${agentId}` });
+//   }
+//   return out;
+// };
 
-export function useModels({ agentId, model, setModel }) {
+// Routing-style ids that the gateway sometimes returns from `models.list`
+// alongside real provider models. Hide them from the picker since they're
+// just aliases for "use the agent default" — confusing in a model dropdown.
+const ROUTING_RE = /^openclaw(\/|$)/i;
+
+// export function useModels({ agentId, model, setModel }) {
+export function useModels({ model, setModel }) {
   const [wsModels, setWsModels] = useState([]);
 
   const models = useMemo(() => {
     const seen = new Set();
     const out  = [];
-    for (const m of [...wsModels, ...ROUTING_FALLBACK(agentId)]) {
-      if (seen.has(m.id)) continue;
+    for (const m of [...wsModels]) {
+      // if (seen.has(m.id)) continue;
       seen.add(m.id);
       out.push(m);
     }
     return out;
-  }, [wsModels, agentId]);
+  }, [wsModels]);
 
   // Reset selection if persisted value disappeared from the new list.
   useEffect(() => {
     if (!model || !models.find((m) => m.id === model)) {
-      setModel(models[0].id);
+      setModel(models[0]?.id);
     }
   }, [model, models, setModel]);
 
@@ -54,7 +60,8 @@ export function useModels({ agentId, model, setModel }) {
         label: m.alias
           ? `${m.name ?? m.id} (${m.alias})`
           : String(m.name ?? m.id),
-      }));
+      }))
+      .filter((m) => !ROUTING_RE.test(m.id));   // hide openclaw/<agentId> aliases
     setWsModels(mapped);
   }, []);
 
