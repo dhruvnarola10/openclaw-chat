@@ -24,7 +24,7 @@
 const path = require('path');
 const VITE_BIN = path.join(__dirname, 'node_modules', '.bin', 'vite');
 
-const PORT        = process.env.PORT        || '3000';
+const PORT        = process.env.PORT        || '3001';
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:18789';
 
 module.exports = {
