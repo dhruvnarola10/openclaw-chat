@@ -2,7 +2,7 @@
 // with the per-session usage snapshot pulled from `sessions.usage`.
 
 import { useMemo, useState } from 'react';
-import { Search, Users } from 'lucide-react';
+import { Search, Trash2, Users } from 'lucide-react';
 import { useGatewayResource } from '../../hooks/useGatewayResource.js';
 import { ago, compactNumber, parseSessionKey } from '../../utils/format.js';
 import { channelMeta } from '../../utils/channels.js';
@@ -10,7 +10,10 @@ import PageHeader from '../common/PageHeader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
 
 export default function SessionsView({ gateway }) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery]               = useState('');
+  const [confirmKey, setConfirmKey]     = useState(null);   // session key being deleted
+  const [deletingKey, setDeletingKey]   = useState(null);   // in-flight delete
+  const [toast, setToast]               = useState('');     // last error
 
   const list = useGatewayResource({
     gateway,
@@ -69,6 +72,26 @@ export default function SessionsView({ gateway }) {
   const loading = list.loading || usage.loading;
   const error   = list.error || usage.error;
 
+  const deleteSession = async (key) => {
+    if (!key) return;
+    setDeletingKey(key);
+    setToast('');
+    try {
+      await gateway.request('sessions.delete', {
+        key,
+        deleteTranscript: true,
+      });
+      // Optimistically refresh — the server's `sessions.list` will reflect
+      // the deletion on its next push too.
+      refresh();
+    } catch (e) {
+      setToast(`Couldn't delete: ${e.message}`);
+    } finally {
+      setDeletingKey(null);
+      setConfirmKey(null);
+    }
+  };
+
   return (
     <div className="ov-view">
       <PageHeader
@@ -78,6 +101,13 @@ export default function SessionsView({ gateway }) {
         refreshing={loading}
         onRefresh={refresh}
       />
+
+      {toast && (
+        <div className="page-toast page-toast--error">
+          {toast}
+          <button className="page-toast-close" onClick={() => setToast('')}>×</button>
+        </div>
+      )}
 
       <section className="ov-card">
         <div className="page-toolbar">
@@ -113,6 +143,7 @@ export default function SessionsView({ gateway }) {
                     <th className="num">Tokens</th>
                     <th className="num">Cost</th>
                     <th>Last activity</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -138,6 +169,16 @@ export default function SessionsView({ gateway }) {
                         <td className="num">{r.tokens != null ? compactNumber(r.tokens) : '—'}</td>
                         <td className="num">{r.cost != null ? '$' + r.cost.toFixed(4) : '—'}</td>
                         <td>{r.updatedAt ? ago(r.updatedAt) : '—'}</td>
+                        <td>
+                          <button
+                            className="row-action row-action--danger"
+                            onClick={() => setConfirmKey(r.key)}
+                            disabled={deletingKey === r.key}
+                            title="Delete session on the gateway"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -146,6 +187,37 @@ export default function SessionsView({ gateway }) {
             </div>
           )}
       </section>
+
+      {confirmKey && (
+        <div className="dialog-overlay" onClick={() => setConfirmKey(null)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete session?</h3>
+            <p>
+              Permanently removes this session and its transcript from the
+              gateway. Other clients subscribed to it will be disconnected.
+            </p>
+            <p className="dialog-key-row">
+              <code className="page-mono">{confirmKey}</code>
+            </p>
+            <div className="dialog-actions">
+              <button
+                className="dialog-cancel"
+                onClick={() => setConfirmKey(null)}
+                disabled={deletingKey === confirmKey}
+              >
+                Cancel
+              </button>
+              <button
+                className="dialog-confirm"
+                onClick={() => deleteSession(confirmKey)}
+                disabled={deletingKey === confirmKey}
+              >
+                {deletingKey === confirmKey ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

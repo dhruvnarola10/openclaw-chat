@@ -2,7 +2,7 @@
 // + multi-modal attachments (click, drag-drop, clipboard paste).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Paperclip, Send, Square } from 'lucide-react';
+import { Mic, Paperclip, Radio, Send, Square, Volume2 } from 'lucide-react';
 import SlashPopup       from './SlashPopup.jsx';
 import AttachmentList   from './AttachmentList.jsx';
 import { useAttachments } from '../../hooks/useAttachments.js';
@@ -12,6 +12,7 @@ export default function MessageInput({
   value, onChange, onSend, onStop,
   loading, slash,
   onOpenVoice, voiceActive,
+  talk,
 }) {
   const ref     = useRef(null);
   const fileRef = useRef(null);
@@ -114,6 +115,8 @@ export default function MessageInput({
           onClear={att.clear}
         />
 
+        {(talk?.talkActive || talk?.error) && <TalkTranscript talk={talk} />}
+
         <div className="input-box">
           <button
             className="attach-btn"
@@ -149,7 +152,17 @@ export default function MessageInput({
           />
 
           <div className="input-right">
-            {onOpenVoice && (
+            {talk?.supported && (
+              <button
+                className={`talk-btn${talk.talkActive ? ' talk-btn--active' : ''}`}
+                onClick={talk.toggle}
+                title={talk.talkActive ? 'Stop talk' : 'Start Talk'}
+                disabled={loading && !talk.talkActive}
+              >
+                {talk.talkActive ? <Volume2 size={16} /> : <Radio size={16} />}
+              </button>
+            )}
+            {/* {onOpenVoice && (
               <button
                 className={`voice-btn${voiceActive ? ' voice-btn--active' : ''}`}
                 onClick={onOpenVoice}
@@ -158,7 +171,7 @@ export default function MessageInput({
               >
                 <Mic size={16} />
               </button>
-            )}
+            )} */}
             {loading
               ? <button className="stop-btn" onClick={onStop} title="Stop"><Square size={16} /></button>
               : (
@@ -176,9 +189,47 @@ export default function MessageInput({
         </div>
       </div>
       <div className="input-hint">
-        Enter to send · Shift+Enter for new line · / for commands · Drop / paste to attach
-        {onOpenVoice && <> · <span className="hint-voice" onClick={onOpenVoice}>🎙 Voice</span></>}
+        Enter to send · Shift+Enter for new line · Drop / paste to attach
+        {/* {onOpenVoice && <> · <span className="hint-voice" onClick={onOpenVoice}>🎙 Voice</span></>} */}
       </div>
+    </div>
+  );
+}
+
+// Live transcript bar shown above the input while Talk Mode is active.
+// Mirrors the OpenClaw built-in dashboard's "You: …" / "Leonardo: …" lines.
+function TalkTranscript({ talk }) {
+  const { state, userInterim, assistantSpeaking, error, toggle } = talk;
+
+  let label = '';
+  let body  = '';
+  if (error) {
+    label = 'Talk error';
+    body  = error;
+  } else if (state === 'connecting') {
+    body = 'Connecting…';
+  } else if (state === 'speaking' && assistantSpeaking) {
+    label = 'Leonardo';
+    body  = assistantSpeaking;
+  } else if (state === 'listening' && userInterim) {
+    label = 'You';
+    body  = userInterim;
+  } else if (state === 'thinking') {
+    body = 'Thinking…';
+  } else if (state === 'listening') {
+    body = 'Listening…';
+  } else {
+    body = '';
+  }
+
+  return (
+    <div className={`talk-transcript talk-transcript--${state}${error ? ' talk-transcript--error' : ''}`}>
+      <span className="talk-transcript-dot" aria-hidden="true" />
+      {label && <strong>{label}:</strong>}
+      <span className="talk-transcript-body">{body}</span>
+      {error && (
+        <button className="talk-transcript-close" onClick={toggle} title="Dismiss">×</button>
+      )}
     </div>
   );
 }

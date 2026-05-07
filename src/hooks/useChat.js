@@ -54,7 +54,7 @@ export function useChat({ apiUrl, token, agentId, model, stream, gateway, thread
       } else {
         threadOps.patchLast(threadId, (m) => ({
           ...m,
-          content: `${err.message}\n\nCheck:\n• Gateway connected (Overview page)\n• Bearer token correct\n• Agent ID valid`,
+          content: formatChatError(err.message, model),
           streaming: false, thinkingStreaming: false, waiting: false, isError: true,
         }));
       }
@@ -81,6 +81,12 @@ export function useChat({ apiUrl, token, agentId, model, stream, gateway, thread
 // ── WS path ─────────────────────────────────────────────────────────────
 
 async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps, wsActiveRef }) {
+  // Guard: refuse to call `sessions.patch` without a valid sessionKey.
+  // This used to throw "INVALID_REQUEST: at /key: must be string" when an
+  // older thread was missing its sessionKey — useThreads.startTurn now
+  // self-heals that, but we still defensively skip if it's not a string.
+  const hasKey = typeof sessionKey === 'string' && sessionKey.length > 0;
+
   // 1. Set the model on the session via `sessions.patch`. The model field
   //    is the only way to override which provider model `chat.send` uses —
   //    `chat.send` itself has no model param. The gateway runs the value
@@ -92,7 +98,7 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
   //    silently get the default model when their pick wasn't applied.
   const isRoutingId = !model || model === 'openclaw' || /^openclaw\//.test(model);
   let resolvedModel = isRoutingId ? null : model;
-  if (!isRoutingId) {
+  if (!isRoutingId && hasKey) {
     try {
       const resp = await gateway.request('sessions.patch', { key: sessionKey, model });
       resolvedModel = resp?.resolved?.model ?? resp?.entry?.modelOverride ?? model;
@@ -327,4 +333,45 @@ async function fetchSessionUsage(gateway, sessionKey) {
   if (ctxPct != null) out.contextPct = Math.round(Number(ctxPct));
 
   return Object.keys(out).length ? out : null;
+}
+
+// Format a chat error for the assistant bubble. Picks the right "Try"
+// hints based on the error category so users don't see "check the bearer
+// token" advice when the actual problem is a 404 from a model provider.
+function formatChatError(message, model) {
+  const text = (message || '').toLowerCase();
+
+  // Provider-side errors — model not in upstream catalog, region issues, etc.
+  if (/\b(404|not[\s-]?found|unknown[\s-]?model|model.*not.*exist|invalid[\s-]?model)\b/.test(text)
+      || /generative ai api error/i.test(message || '')) {
+    return `${message}\n\n` +
+           `The gateway accepted "${model}" but the upstream provider doesn't recognise it.\n` +
+           `Try:\n` +
+           `• Picking a different model from the dropdown\n` +
+           `• Confirming the gateway's model catalog matches what the provider currently exposes`;
+  }
+
+  // Auth / quota
+  if (/\b(401|403|unauthor|forbidden|quota|rate[\s-]?limit|exhausted)\b/.test(text)) {
+    return `${message}\n\n` +
+           `Try:\n` +
+           `• Checking the API key for the model's provider on the gateway side\n` +
+           `• Waiting and retrying if rate-limited`;
+  }
+
+  // Connection / gateway-level
+  if (/\b(gateway closed|disconnect|timeout|econnrefused|fetch failed|missing scope)\b/.test(text)) {
+    return `${message}\n\n` +
+           `Check:\n` +
+           `• Gateway connected (Overview page)\n` +
+           `• Bearer token correct\n` +
+           `• Agent ID valid`;
+  }
+
+  // Default — keep the original generic checklist.
+  return `${message}\n\n` +
+         `Check:\n` +
+         `• Gateway connected (Overview page)\n` +
+         `• Bearer token correct\n` +
+         `• Agent ID valid`;
 }

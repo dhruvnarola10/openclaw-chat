@@ -15,6 +15,11 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0',
+    allowedHosts: [
+      'zebraic-ngoc-nonruminatingly.ngrok-free.dev',
+      '.ngrok-free.app',  // Allow any ngrok domain (optional)
+      '.ngrok.io'         // For older ngrok URLs (optional)
+    ],
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:18789',

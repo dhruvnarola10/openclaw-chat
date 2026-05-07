@@ -83,9 +83,14 @@ export function useThreads({ agentId }) {
       const existing = prev.find((t) => t.id === activeId);
       if (existing) {
         resolvedThreadId   = existing.id;
-        resolvedSessionKey = existing.sessionKey;
+        // Self-heal: older threads in localStorage may have no sessionKey.
+        // Generate one and persist it back so subsequent sends don't break.
+        resolvedSessionKey = (typeof existing.sessionKey === 'string' && existing.sessionKey)
+          ? existing.sessionKey
+          : `agent:${agentId}:web:${existing.id}`;
         return prev.map((t) => t.id !== existing.id ? t : {
           ...t,
+          sessionKey: resolvedSessionKey,
           title: t.title || titleText,
           updatedAt: Date.now(),
           messages: [...t.messages, userMsg, asstMsg],

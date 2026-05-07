@@ -5,7 +5,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChat }           from '../hooks/useChat.js';
+import { useRealtimeTalk }   from '../hooks/useRealtimeTalk.js';
 import { useSlashCommands }  from '../hooks/useSlashCommands.js';
+import { useTalk }           from '../hooks/useTalk.js';
 import { useVoice }          from '../hooks/useVoice.js';
 import ChatHeader            from '../components/chat/ChatHeader.jsx';
 import Messages              from '../components/chat/Messages.jsx';
@@ -44,25 +46,55 @@ export default function ChatView({ config, models, threadOps, gateway }) {
     }, []),
   });
 
-  // Auto-read-aloud: when the last assistant message finishes streaming while
-  // voice mode is open, pipe it through TTS.
+  // ── Talk Mode ───────────────────────────────────────────────────────────
+  // Two implementations:
+  //   • realtime — WebRTC + OpenAI Realtime via the gateway. Best quality
+  //     when the gateway has the `talk.client.create` extension.
+  //   • web speech — continuous Web Speech API + browser TTS, routed
+  //     through chat.send. Used when the gateway lacks realtime methods.
+  // We try realtime first; the realtime hook flips `fallback=true` when
+  // it detects the gateway doesn't support those methods, after which we
+  // hand the Talk button over to the Web Speech hook.
+  const activeThreadRef = useRef(threadOps.activeThread);
+  activeThreadRef.current = threadOps.activeThread;
+
+  const realtimeTalk = useRealtimeTalk({
+    gateway,
+    agentId: config.agentId,
+    getSessionKey: () => activeThreadRef.current?.sessionKey ?? null,
+  });
+  const webSpeechTalk = useTalk({
+    onTranscript: useCallback((text) => {
+      chatSendRef.current({ text, attachments: [] });
+    }, []),
+  });
+
+  // Active hook = realtime by default; switch permanently to Web Speech
+  // once realtime reports it can't run on this gateway.
+  const talk = realtimeTalk.fallback ? webSpeechTalk : realtimeTalk;
+
+  // Watch the last assistant message — when it finishes streaming via the
+  // text path, pipe it through the modal voice (vosk) for read-aloud.
+  // Realtime talk handles its own audio so we skip it when talk is active.
   const { threads, activeId, activeThread } = threadOps;
   const messages = activeThread?.messages ?? [];
   const lastMsg  = messages[messages.length - 1];
   const prevStreamRef = useRef(false);
 
   useEffect(() => {
-    if (!voice.voiceOpen) { prevStreamRef.current = false; return; }
     if (!lastMsg || lastMsg.role !== 'assistant') return;
 
     const wasStreaming = prevStreamRef.current;
     const nowDone      = !lastMsg.streaming && !lastMsg.waiting && !lastMsg.isError;
 
     if (wasStreaming && nowDone && lastMsg.content) {
-      voice.onResponseReady(lastMsg.content);
+      // Web Speech talk mode: speak the reply through the browser TTS.
+      // (Realtime mode handles audio in the WebRTC peer connection itself.)
+      if (webSpeechTalk.talkActive) webSpeechTalk.speak(lastMsg.content);
+      else if (voice.voiceOpen)     voice.onResponseReady(lastMsg.content);
     }
     prevStreamRef.current = !!(lastMsg.streaming || lastMsg.waiting);
-  }, [lastMsg, voice]);
+  }, [lastMsg, voice, webSpeechTalk]);
 
   // ── Gateway helpers ─────────────────────────────────────────────────────
 
@@ -123,6 +155,7 @@ export default function ChatView({ config, models, threadOps, gateway }) {
           slash={slash}
           onOpenVoice={voice.supported ? voice.openVoice : null}
           voiceActive={voice.voiceOpen}
+          talk={talk}
         />
       </div>
 
@@ -138,8 +171,26 @@ export default function ChatView({ config, models, threadOps, gateway }) {
 
       {deletingId && (
         <DeleteDialog
+          thread={threads.find((t) => t.id === deletingId)}
+          gatewayReady={gateway.status === 'on'}
           onCancel={() => setDeletingId(null)}
-          onConfirm={() => { threadOps.deleteThread(deletingId); setDeletingId(null); }}
+          onConfirm={async ({ alsoDeleteServer }) => {
+            const target = threads.find((t) => t.id === deletingId);
+            // Delete locally first so the UI updates immediately.
+            threadOps.deleteThread(deletingId);
+            setDeletingId(null);
+            // Then ask the gateway to drop the server-side session, if requested.
+            if (alsoDeleteServer && target?.sessionKey) {
+              try {
+                await gateway.request('sessions.delete', {
+                  key:              target.sessionKey,
+                  deleteTranscript: true,
+                });
+              } catch (e) {
+                console.warn('[sessions.delete] failed:', e.message);
+              }
+            }
+          }}
         />
       )}
 
@@ -159,15 +210,45 @@ export default function ChatView({ config, models, threadOps, gateway }) {
   );
 }
 
-function DeleteDialog({ onCancel, onConfirm }) {
+function DeleteDialog({ thread, gatewayReady, onCancel, onConfirm }) {
+  const [alsoDeleteServer, setAlsoDeleteServer] = useState(true);
+  const sessionKey = thread?.sessionKey;
+  const title = thread?.title || sessionKey || 'this conversation';
+
   return (
     <div className="dialog-overlay" onClick={onCancel}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h3>Delete conversation?</h3>
-        <p>This will permanently remove the chat history. The server-side session will be unaffected.</p>
+        <p>
+          Removes <strong>“{title}”</strong> from this app. Other clients
+          subscribed to the same session will be unaffected unless you also
+          delete it server-side.
+        </p>
+
+        {sessionKey && (
+          <label className={`dialog-check${!gatewayReady ? ' dialog-check--disabled' : ''}`}>
+            <input
+              type="checkbox"
+              checked={alsoDeleteServer && gatewayReady}
+              disabled={!gatewayReady}
+              onChange={(e) => setAlsoDeleteServer(e.target.checked)}
+            />
+            <span>
+              Also delete on the gateway (<code>sessions.delete</code> on{' '}
+              <code className="dialog-key">{sessionKey}</code>)
+              {!gatewayReady && <em> — gateway offline</em>}
+            </span>
+          </label>
+        )}
+
         <div className="dialog-actions">
-          <button className="dialog-cancel"  onClick={onCancel}>Cancel</button>
-          <button className="dialog-confirm" onClick={onConfirm}>Delete</button>
+          <button className="dialog-cancel" onClick={onCancel}>Cancel</button>
+          <button
+            className="dialog-confirm"
+            onClick={() => onConfirm({ alsoDeleteServer: alsoDeleteServer && gatewayReady })}
+          >
+            Delete
+          </button>
         </div>
       </div>
     </div>
