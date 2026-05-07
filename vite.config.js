@@ -12,14 +12,15 @@ logger.error = (msg, opts) => {
 export default defineConfig({
   customLogger: logger,
   plugins: [react()],
-  server: {
-    port: 3000,
+  preview: {
+    port: 3001,
     host: '0.0.0.0',
-    allowedHosts: [
-      'zebraic-ngoc-nonruminatingly.ngrok-free.dev',
-      '.ngrok-free.app',  // Allow any ngrok domain (optional)
-      '.ngrok.io'         // For older ngrok URLs (optional)
-    ],
+    strictPort: true,
+    cors: true
+  },
+  server: {
+    port: 3001,
+    host: '0.0.0.0',
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:18789',
