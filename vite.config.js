@@ -16,7 +16,14 @@ export default defineConfig({
     port: 3001,
     host: '0.0.0.0',
     strictPort: true,
-    cors: true
+    cors: true,
+    // Vite 5+ rejects requests whose Host header isn't in this list
+    // with a 403 (the "Blocked request. This host is not allowed."
+    // CVE-2025-24010 mitigation). Behind nginx/Caddy the Host arrives as
+    // your public domain, so it must be listed here. `true` = allow all
+    // hosts — safe for our setup since the app is behind a TLS-terminating
+    // reverse proxy that already vets the host.
+    allowedHosts: true,
   },
   server: {
     port: 3001,
