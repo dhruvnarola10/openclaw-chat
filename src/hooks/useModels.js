@@ -28,6 +28,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 // just aliases for "use the agent default" — confusing in a model dropdown.
 const ROUTING_RE = /^openclaw(\/|$)/i;
 
+// Preferred default — first match wins. Override by setting VITE_DEFAULT_MODEL.
+// If none of these are present in the gateway's catalog, the picker falls
+// back to the first available entry.
+const PREFERRED_DEFAULTS = [
+  import.meta.env?.VITE_DEFAULT_MODEL,
+  'gpt-oss:120b-cloud',
+  'gpt-oss:120b',
+  'gpt-5.5',
+].filter(Boolean);
+
+function pickDefault(models) {
+  for (const want of PREFERRED_DEFAULTS) {
+    const hit = models.find((m) => m.id === want);
+    if (hit) return hit.id;
+  }
+  return models[0]?.id;
+}
+
 // export function useModels({ agentId, model, setModel }) {
 export function useModels({ model, setModel }) {
   const [wsModels, setWsModels] = useState([]);
@@ -44,9 +62,11 @@ export function useModels({ model, setModel }) {
   }, [wsModels]);
 
   // Reset selection if persisted value disappeared from the new list.
+  // First-time visitors (no `model` saved) get the preferred default.
   useEffect(() => {
+    if (!models.length) return;
     if (!model || !models.find((m) => m.id === model)) {
-      setModel(models[0]?.id);
+      setModel(pickDefault(models));
     }
   }, [model, models, setModel]);
 

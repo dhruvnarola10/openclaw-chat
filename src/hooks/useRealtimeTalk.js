@@ -53,11 +53,20 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
   const sessionKeyRef = useRef(null);
   const transcriptRef = useRef('');
 
+  // We expose `supported: true` whenever the browser is capable in
+  // principle (RTCPeerConnection + WebSocket exist). The mic-access check
+  // happens at start time, so users on an HTTP non-localhost origin see
+  // the button + a clear error instead of it silently disappearing.
   const supported =
     typeof navigator !== 'undefined' &&
-    !!navigator.mediaDevices?.getUserMedia &&
     typeof RTCPeerConnection !== 'undefined' &&
     typeof WebSocket !== 'undefined';
+
+  const hasMicAccess = !!navigator?.mediaDevices?.getUserMedia;
+  const isSecureContext =
+    typeof window !== 'undefined' &&
+    (window.isSecureContext === true ||
+     ['localhost', '127.0.0.1', '::1'].includes(window.location?.hostname));
 
   // ── Cleanup ─────────────────────────────────────────────────────────────
 
@@ -349,7 +358,16 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
 
   const start = useCallback(async () => {
     if (!supported) {
-      setError('Your browser does not support real-time voice. Use Chrome/Edge/Safari over HTTPS.');
+      setError('Your browser does not support real-time voice. Use Chrome/Edge/Safari.');
+      return;
+    }
+    if (!hasMicAccess || !isSecureContext) {
+      setError(
+        'Microphone access requires HTTPS or localhost.\n' +
+        'You\'re on a non-secure origin, so the browser blocks `getUserMedia`.\n' +
+        'Fix: serve the app over HTTPS (Cloudflare Tunnel / Caddy / self-signed cert) ' +
+        'or open it on localhost.'
+      );
       return;
     }
     if (gateway?.status !== 'on') {
