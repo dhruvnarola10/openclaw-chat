@@ -213,16 +213,15 @@ export default function ChatView({ config, models, threadOps, gateway }) {
 function DeleteDialog({ thread, gatewayReady, onCancel, onConfirm }) {
   const [alsoDeleteServer, setAlsoDeleteServer] = useState(true);
   const sessionKey = thread?.sessionKey;
-  const title = thread?.title || sessionKey || 'this conversation';
+  const title = thread?.title || 'this conversation';
 
   return (
     <div className="dialog-overlay" onClick={onCancel}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h3>Delete conversation?</h3>
         <p>
-          Removes <strong>“{title}”</strong> from this app. Other clients
-          subscribed to the same session will be unaffected unless you also
-          delete it server-side.
+          <strong>“{title}”</strong> will be removed from your chat list.
+          This can't be undone.
         </p>
 
         {sessionKey && (
@@ -234,8 +233,7 @@ function DeleteDialog({ thread, gatewayReady, onCancel, onConfirm }) {
               onChange={(e) => setAlsoDeleteServer(e.target.checked)}
             />
             <span>
-              Also delete on the gateway (<code>sessions.delete</code> on{' '}
-              <code className="dialog-key">{sessionKey}</code>)
+              Also delete from the server
               {!gatewayReady && <em> — gateway offline</em>}
             </span>
           </label>

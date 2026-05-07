@@ -188,16 +188,19 @@ export default function SessionsView({ gateway }) {
           )}
       </section>
 
-      {confirmKey && (
+      {confirmKey && (() => {
+        const row = sorted.find((r) => r.key === confirmKey);
+        const meta = channelMeta(row?.channel);
+        const peerLabel = row?.peer || row?.key || 'this session';
+        return (
         <div className="dialog-overlay" onClick={() => setConfirmKey(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <h3>Delete session?</h3>
             <p>
-              Permanently removes this session and its transcript from the
-              gateway. Other clients subscribed to it will be disconnected.
-            </p>
-            <p className="dialog-key-row">
-              <code className="page-mono">{confirmKey}</code>
+              <strong>“{peerLabel}”</strong> on <strong>{meta.label}</strong>
+              {' '}and its full message history will be permanently removed.
+              Anyone connected to this session will be disconnected. This
+              can't be undone.
             </p>
             <div className="dialog-actions">
               <button
@@ -217,7 +220,8 @@ export default function SessionsView({ gateway }) {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
