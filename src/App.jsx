@@ -19,6 +19,11 @@ import CronView        from './components/cron/CronView.jsx';
 import SkillsView      from './components/skills/SkillsView.jsx';
 import ChannelsView    from './components/channels/ChannelsView.jsx';
 import AgentsView      from './components/agents/AgentsView.jsx';
+import WorkspaceView    from './components/workspace/WorkspaceView.jsx';
+import ApprovalsView    from './components/workspace/ApprovalsView.jsx';
+import TagsView         from './components/workspace/TagsView.jsx';
+import CustomFieldsView from './components/workspace/CustomFieldsView.jsx';
+import ActivityView     from './components/workspace/ActivityView.jsx';
 import ErrorBoundary   from './components/common/ErrorBoundary.jsx';
 
 export default function App() {
@@ -29,6 +34,13 @@ export default function App() {
 
 function Authed() {
   const [view, setView] = useState('overview');
+  // When set, ChatView will join this session on next render and clear it.
+  // Used by CronView's run-history "Open in chat" deep-link.
+  const [pendingJoinKey, setPendingJoinKey] = useState(null);
+  const openChatForSession = (sessionKey) => {
+    setPendingJoinKey(sessionKey);
+    setView('chat');
+  };
   const { theme, cycleTheme } = useTheme();
 
   // agentId:  config.agentId,
@@ -64,13 +76,19 @@ function Authed() {
 
       <ErrorBoundary key={view}>
         {view === 'overview' && <OverviewView config={configBundle} gateway={gateway} />}
-        {view === 'chat'     && <ChatView config={configBundle} models={modelsBundle} threadOps={threadOps} gateway={gateway} />}
+        {view === 'chat'     && <ChatView config={configBundle} models={modelsBundle} threadOps={threadOps} gateway={gateway}
+                                          pendingJoinKey={pendingJoinKey} onPendingJoinHandled={() => setPendingJoinKey(null)} />}
         {view === 'usage'    && <UsageView config={configBundle} gateway={gateway} />}
         {view === 'sessions' && <SessionsView gateway={gateway} />}
-        {view === 'cron'     && <CronView gateway={gateway} />}
+        {view === 'cron'     && <CronView gateway={gateway} onOpenSession={openChatForSession} />}
         {view === 'skills'   && <SkillsView gateway={gateway} config={configBundle} />}
         {view === 'channels' && <ChannelsView gateway={gateway} />}
         {view === 'agents'   && <AgentsView gateway={gateway} config={configBundle} />}
+        {view === 'workspace'     && <WorkspaceView onOpenSession={openChatForSession} />}
+        {view === 'approvals'     && <ApprovalsView />}
+        {view === 'tags'          && <TagsView />}
+        {view === 'custom-fields' && <CustomFieldsView />}
+        {view === 'activity'      && <ActivityView />}
       </ErrorBoundary>
     </div>
   );

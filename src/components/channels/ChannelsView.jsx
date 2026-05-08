@@ -12,7 +12,8 @@ export default function ChannelsView({ gateway }) {
   const { data, loading, error, refresh } = useGatewayResource({
     gateway,
     method:     'channels.status',
-    intervalMs: 30_000,
+    intervalMs: 60_000,   // channels.status is heavyweight — don't poll too often
+    timeoutMs:  30_000,   // some providers take >8s to report state
   });
 
   const accounts = flattenAccounts(data);

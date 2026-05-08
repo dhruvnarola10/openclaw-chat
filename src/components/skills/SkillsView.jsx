@@ -100,42 +100,31 @@ export default function SkillsView({ gateway, config }) {
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtered]);
 
-  // Toggle — try several method/param shapes since the right one varies.
+  // Toggle a skill on/off. The gateway's `skills.update` schema accepts
+  // exactly one shape for this:  { skillKey, enabled }
+  // (other anyOf branch is for clawhub installs and needs `source`).
   const toggle = useCallback(async (skill) => {
     if (gateway.status !== 'on') return;
     if (busy.has(skill.id)) return;
+
+    const skillKey = skill.skillKey ?? skill.id;
+    if (!skillKey) {
+      setToast(`Couldn't toggle "${skill.name}": no skillKey on this entry.`);
+      return;
+    }
 
     const next = !skill.active;
     setBusy((p) => new Set([...p, skill.id]));
     setToast('');
 
-    const attempts = [
-      { method: 'skills.update',  params: { id: skill.id, enabled: next } },
-      { method: 'skills.update',  params: { id: skill.id, active:  next } },
-      { method: 'skills.update',  params: { id: skill.id, disabled: !next } },
-      { method: next ? 'skills.install' : 'skills.uninstall', params: { id: skill.id } },
-    ];
-
-    let lastErr = null;
-    let success = false;
-    for (const { method, params } of attempts) {
-      try {
-        await gateway.request(method, params);
-        success = true;
-        break;
-      } catch (e) {
-        lastErr = `${method}: ${e.message}`;
-      }
-    }
-
-    setBusy((p) => { const s = new Set(p); s.delete(skill.id); return s; });
-
-    if (success) {
-      // Re-fetch to get the authoritative new state
+    try {
+      await gateway.request('skills.update', { skillKey, enabled: next });
       skills.refresh();
       tools.refresh();
-    } else {
-      setToast(`Couldn't toggle "${skill.name}". ${lastErr ?? ''}`);
+    } catch (e) {
+      setToast(`Couldn't toggle "${skill.name}": ${e.message}`);
+    } finally {
+      setBusy((p) => { const s = new Set(p); s.delete(skill.id); return s; });
     }
   }, [gateway, busy, skills, tools]);
 
@@ -270,8 +259,13 @@ function Switch({ checked, disabled, onChange }) {
 }
 
 function normalize(s, sourceTag) {
+  // skillKey is the canonical key the gateway uses in `skills.update`
+  // (entries[skillKey]). It comes back from `skills.status` directly;
+  // tools.catalog uses `key`/`id`/`slug` so fall back to those.
+  const skillKey = s.skillKey ?? s.key ?? s.id ?? s.slug ?? s.name;
   return {
-    id:          s.id ?? s.name ?? s.slug,
+    id:          skillKey,
+    skillKey,
     name:        s.name ?? s.id ?? s.label ?? s.slug,
     description: s.description ?? s.summary ?? s.help,
     group:       s.group ?? s.category ?? s.profile ?? s.namespace,

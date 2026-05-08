@@ -16,7 +16,7 @@ import Sidebar               from '../components/sidebar/Sidebar.jsx';
 import SettingsPanel         from '../components/settings/SettingsPanel.jsx';
 import VoiceModal            from '../components/voice/VoiceModal.jsx';
 
-export default function ChatView({ config, models, threadOps, gateway }) {
+export default function ChatView({ config, models, threadOps, gateway, pendingJoinKey, onPendingJoinHandled }) {
   const [tab,          setTab]          = useState('threads');
   const [showSettings, setShowSettings] = useState(false);
   const [deletingId,   setDeletingId]   = useState(null);
@@ -112,6 +112,16 @@ export default function ChatView({ config, models, threadOps, gateway }) {
     setTab('threads');
     gateway.fetchHistory(sessionKey, tid, (msgs) => threadOps.setMessages(tid, msgs));
   };
+
+  // Deep-link from CronView (or anywhere else) — once the gateway is ready,
+  // join the requested session and clear the pending key so we don't loop.
+  useEffect(() => {
+    if (!pendingJoinKey) return;
+    if (gateway.status !== 'on') return;
+    joinSession(pendingJoinKey);
+    onPendingJoinHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingJoinKey, gateway.status]);
 
   return (
     <div className="app-row">

@@ -29,11 +29,20 @@ export default defineConfig({
     port: 3001,
     host: '0.0.0.0',
     proxy: {
+      // Mission-control backend (Express on :4000). Listed FIRST because
+      // vite checks proxy keys in insertion order and /api/v1 is more
+      // specific than /api.
+      '/api/v1': {
+        target: 'http://127.0.0.1:4000',
+        changeOrigin: true,
+      },
+      // OpenClaw OpenResponses HTTP API (/api/responses → /v1/responses)
       '/api': {
         target: 'http://127.0.0.1:18789',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/v1')
       },
+      // OpenClaw gateway WebSocket
       '/ws': {
         target: 'ws://127.0.0.1:18789',
         ws: true,

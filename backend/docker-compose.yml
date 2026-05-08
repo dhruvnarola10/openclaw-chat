@@ -1,0 +1,67 @@
+# Three Docker services backing the native API:
+#   • postgres — primary data store
+#   • redis    — BullMQ queue + SSE pub/sub (data-plane only, not a cache of DB)
+#   • worker   — background processor (task-assign, task-heartbeat, etc.)
+#
+# The Express API itself runs natively under PM2 — see ../ecosystem.config.cjs.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: leo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-leonardo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leonardo}
+      POSTGRES_DB:       ${POSTGRES_DB:-leonardo}
+    ports:
+      - "127.0.0.1:5433:5432"   # localhost-only; nginx never proxies to db
+    volumes:
+      - leo_postgres_data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-leonardo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: leo-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - leo_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: leo-worker
+    restart: unless-stopped
+    # Linux-only: share the host's network namespace so the worker can
+    # reach postgres (127.0.0.1:5433), redis (127.0.0.1:6380), and the
+    # OpenClaw gateway (127.0.0.1:18789) all via loopback. The gateway's
+    # origin check accepts http://127.0.0.1:* via the local-loopback
+    # fallback, no allowlist edit needed.
+    network_mode: host
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    environment:
+      DATABASE_URL:    ${WORKER_DATABASE_URL:-postgresql://leonardo:leonardo@127.0.0.1:5433/leonardo}
+      REDIS_URL:       ${WORKER_REDIS_URL:-redis://127.0.0.1:6380}
+      GATEWAY_WS_URL:  ${WORKER_GATEWAY_WS_URL:-ws://127.0.0.1:18789}
+      GATEWAY_TOKEN:   ${GATEWAY_TOKEN}
+      NODE_ENV:        production
+
+volumes:
+  leo_postgres_data:
+  leo_redis_data:

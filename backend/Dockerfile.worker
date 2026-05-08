@@ -1,0 +1,17 @@
+# Lightweight worker image. Same source tree as the API — only the entry
+# point differs (src/worker/index.js).
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package manifests first to maximize layer cache hits.
+COPY package.json package-lock.json* ./
+RUN npm install --omit=dev --no-audit --no-fund
+
+# App sources
+COPY src ./src
+
+ENV NODE_ENV=production
+
+# Run the BullMQ worker
+CMD ["node", "src/worker/index.js"]

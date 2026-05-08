@@ -1,0 +1,29 @@
+{
+  "name": "leonardo-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev":         "node --watch src/index.js",
+    "start":       "node src/index.js",
+    "worker":      "node src/worker/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate":  "node src/db/migrate.js",
+    "db:studio":   "drizzle-kit studio"
+  },
+  "dependencies": {
+    "bullmq":            "^5.13.0",
+    "cors":              "^2.8.5",
+    "dotenv":            "^16.4.5",
+    "drizzle-orm":       "^0.36.0",
+    "express":           "^4.21.0",
+    "express-rate-limit":"^7.4.0",
+    "ioredis":           "^5.4.1",
+    "pg":                "^8.13.0",
+    "ws":                "^8.18.0",
+    "zod":               "^3.23.8"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.28.0"
+  }
+}

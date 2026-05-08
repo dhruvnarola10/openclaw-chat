@@ -66,5 +66,25 @@ module.exports = {
         GATEWAY_URL,
       },
     },
+
+    // Backend API — Express server backed by Postgres + Redis (Docker).
+    // Picks up its own env from backend/.env via dotenv.
+    {
+      name:        'leonardo-api',
+      script:      'src/index.js',
+      cwd:         path.join(__dirname, 'backend'),
+      exec_mode:   'fork',
+      instances:   1,
+      autorestart: true,
+      watch:       false,
+      max_memory_restart: '512M',
+      env: {
+        NODE_ENV:    'production',
+        PORT:        process.env.API_PORT || '4000',
+      },
+      min_uptime:    '10s',
+      max_restarts:  10,
+      restart_delay: 2000,
+    },
   ],
 };
