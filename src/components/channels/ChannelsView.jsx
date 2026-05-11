@@ -7,6 +7,8 @@ import { ago } from '../../utils/format.js';
 import { channelMeta } from '../../utils/channels.js';
 import PageHeader from '../common/PageHeader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
+import SupportedChannels from './SupportedChannels.jsx';
+import './channels.css';
 
 export default function ChannelsView({ gateway }) {
   const { data, loading, error, refresh } = useGatewayResource({
@@ -40,6 +42,8 @@ export default function ChannelsView({ gateway }) {
         refreshing={loading}
         onRefresh={refresh}
       />
+
+      <SupportedChannels />
 
       <div className="ov-stat-row">
         <div className="ov-tile">

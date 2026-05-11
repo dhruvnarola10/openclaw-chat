@@ -5,3 +5,4 @@ dist/
 .DS_Store
 drizzle/   # generated SQL migrations are committed; this is for studio etc.
 !src/db/migrations/
+data
