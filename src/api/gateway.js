@@ -17,6 +17,33 @@ const PING_INTERVAL_MS = 20_000;
 const RECONNECT_DELAY_MS = 5_000;
 const AUTH_FALLBACK_MS = 3_000;
 
+// Per-browser stable identity — sent as client.instanceId on every connect.
+// Without this, the gateway computes presenceKey = (device.id ?? instanceId
+// ?? connId) and treats every user with the same `client.id` as the same
+// device, evicting earlier sessions when a new one arrives. That's why
+// "two users can't connect at the same time" and "my socket randomly
+// disconnects when someone else opens the app" turn out to be the same
+// bug. See openclaw/src/gateway/server/ws-connection/message-handler.ts:1305
+// and openclaw/src/gateway/protocol/client-info.ts:45.
+function getInstanceId() {
+  // localStorage so the id survives page reloads but is unique per
+  // browser profile. Different tabs in the same browser share it — that's
+  // fine: each tab still gets its own connId server-side, and presenceKey
+  // (instanceId) only collapses presence for the *same* user, which is
+  // the desired behaviour.
+  try {
+    let id = localStorage.getItem('oc-instance-id');
+    if (!id) {
+      id = (crypto?.randomUUID?.() ?? `oc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+      localStorage.setItem('oc-instance-id', id);
+    }
+    return id;
+  } catch {
+    // Private mode / storage disabled — fall back to a session-only id.
+    return `oc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
 export class Gateway {
   constructor({ url, getToken, onStatus, onEvent, onSessions, onModels, onChat }) {
     this.url        = url;
@@ -135,7 +162,13 @@ export class Gateway {
         params: {
           minProtocol: PROTO_MIN,
           maxProtocol: PROTO_MAX,
-          client: { id: 'openclaw-control-ui', version: '1.0.0', platform: 'web', mode: 'ui' },
+          client: {
+            id:         'openclaw-control-ui',
+            version:    '1.0.0',
+            platform:   'web',
+            mode:       'ui',
+            instanceId: getInstanceId(),
+          },
           auth:   { token: this.getToken() },
           // operator.admin is required for `sessions.patch` (model override),
           // `cron.add/update/remove`, and `skills.install/update`. Without it
