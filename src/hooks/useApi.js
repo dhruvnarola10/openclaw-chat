@@ -1,18 +1,34 @@
 // Tiny fetch wrapper for the mission-control backend (/api/v1/*).
-// Adds the bearer token from VITE_MC_TOKEN, parses JSON, surfaces errors
-// with the server's actual error.message when present.
+// Reads the JWT from localStorage at every call (so post-login the token
+// is picked up without rebuilding the bundle), with a build-time
+// VITE_MC_TOKEN fallback for service / dev contexts.
 
 import { useCallback, useEffect, useState } from 'react';
 
-const BASE  = import.meta.env.VITE_MC_API   ?? '/api/v1';
-const TOKEN = import.meta.env.VITE_MC_TOKEN ?? '';
+const BASE         = import.meta.env.VITE_MC_API   ?? '/api/v1';
+const FALLBACK_TOK = import.meta.env.VITE_MC_TOKEN ?? '';
+const TOKEN_KEY    = 'oc-jwt';
+
+// Always re-read from localStorage so a fresh login (which writes the JWT)
+// is visible to in-flight callers without a page reload.
+function currentToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || FALLBACK_TOK;
+  } catch {
+    return FALLBACK_TOK;
+  }
+}
+
+// Exposed so SSE callers (which use EventSource and can't set headers)
+// can put the token in the query string.
+export function getApiToken() { return currentToken(); }
 
 async function request(path, { method = 'GET', body, signal } = {}) {
   const res = await fetch(BASE + path, {
     method,
     signal,
     headers: {
-      Authorization:  `Bearer ${TOKEN}`,
+      Authorization:  `Bearer ${currentToken()}`,
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -66,7 +82,7 @@ export function useApi(path, deps = []) {
  */
 export function openSse(path, onEvent) {
   const url = new URL(BASE + path, window.location.origin);
-  url.searchParams.set('token', TOKEN);
+  url.searchParams.set('token', currentToken());
   const es = new EventSource(url.toString());
 
   // We listen for any named event we care about

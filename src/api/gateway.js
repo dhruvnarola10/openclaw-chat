@@ -59,6 +59,10 @@ export class Gateway {
     this.authed    = false;
     this.pingTimer = null;
     this.retryTimer = null;
+    // True while the user has explicitly disconnected — suppresses the
+    // 5s auto-reconnect that _onClose normally schedules. Cleared as soon
+    // as connect() is called again.
+    this.manuallyClosed = false;
     this.pending   = new Map();   // reqId → { resolve, reject }
   }
 
@@ -68,6 +72,7 @@ export class Gateway {
     const s = this.socket?.readyState;
     if (s === WebSocket.OPEN || s === WebSocket.CONNECTING) return;
 
+    this.manuallyClosed = false;
     this.connecting = true;
     clearTimeout(this.retryTimer);
     this.onStatus('connecting');
@@ -83,6 +88,7 @@ export class Gateway {
 
   /** Close + clear timers. The instance can be re-used by calling connect() again. */
   close() {
+    this.manuallyClosed = true;
     clearTimeout(this.retryTimer);
     clearInterval(this.pingTimer);
     this.connecting = false;
@@ -146,7 +152,10 @@ export class Gateway {
       reject(new Error('Gateway closed'));
     }
     this.pending.clear();
-    this.retryTimer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
+    // Skip auto-reconnect when the user has explicitly disconnected.
+    if (!this.manuallyClosed) {
+      this.retryTimer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
+    }
   }
 
   _onMessage({ data }) {

@@ -15,6 +15,12 @@ export const env = {
   port:          Number(process.env.PORT || 4000),
   nodeEnv:       process.env.NODE_ENV || 'development',
   appToken:      process.env.APP_TOKEN ?? '',
+  // JWT_SECRET signs user-session tokens. If not set explicitly, derive a
+  // stable per-deployment secret from APP_TOKEN so dev setups Just Work
+  // without an extra env var. In production set JWT_SECRET independently
+  // so rotating APP_TOKEN doesn't invalidate every active session.
+  jwtSecret:     process.env.JWT_SECRET ?? (process.env.APP_TOKEN ? `jwt:${process.env.APP_TOKEN}` : ''),
+  jwtTtlSeconds: Number(process.env.JWT_TTL_SECONDS ?? 60 * 60 * 24 * 7), // 7d
   databaseUrl:   required('DATABASE_URL'),
   redisUrl:      required('REDIS_URL'),
   gatewayWsUrl:  required('GATEWAY_WS_URL'),

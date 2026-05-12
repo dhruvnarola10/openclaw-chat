@@ -89,6 +89,9 @@ export function useGateway({ tokenRef, onModelsList }) {
   }, []);
 
   const reconnect = useCallback(() => gatewayRef.current?.connect(), []);
+  // Explicit user-initiated disconnect — sets manuallyClosed on the
+  // underlying Gateway so _onClose won't auto-reconnect after 5s.
+  const disconnect = useCallback(() => gatewayRef.current?.close(), []);
 
   /**
    * Request the message transcript for a given sessionKey via WS chat.history
@@ -117,9 +120,34 @@ export function useGateway({ tokenRef, onModelsList }) {
     [],
   );
 
+  /**
+   * Preflight: ask the gateway whether a restart would be disruptive right
+   * now. Returns { safe, counts, blockers, summary } per the openclaw
+   * restart-coordinator. Cheap RPC (operator.read scope).
+   */
+  const restartPreflight = useCallback(
+    () => gatewayRef.current?.request('gateway.restart.preflight', {}),
+    [],
+  );
+
+  /**
+   * Send a SIGUSR1-based restart request to the gateway. Requires the
+   * operator.admin scope — which our control-UI connect already requests.
+   * The gateway responds *before* dropping the WS, so the caller sees
+   * { ok, status: 'scheduled'|'deferred'|'coalesced' } first, then the
+   * existing _onClose auto-reconnect loop will tick our status back to
+   * 'on' once the gateway is back up.
+   */
+  const restartGateway = useCallback(
+    (reason = 'manual UI restart') =>
+      gatewayRef.current?.request('gateway.restart.request', { reason }),
+    [],
+  );
+
   return {
     status, sessions, events, loadingHistory,
-    fetchHistory, reconnect, request,
+    fetchHistory, reconnect, disconnect, request,
+    restartPreflight, restartGateway,
     subscribeToChat,
   };
 }

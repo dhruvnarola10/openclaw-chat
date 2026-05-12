@@ -1,32 +1,179 @@
 // Overview dashboard — gateway access, snapshot, headline stats,
 // recent sessions, and a live event log.
 
-import { useMemo, useState } from 'react';
-import { Activity, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Activity, Eye, EyeOff, LogOut, Monitor, Moon, Plug, PowerOff,
+  RefreshCw, RotateCw, Sun,
+} from 'lucide-react';
 import { useOverview } from '../../hooks/useOverview.js';
 import { ago, compactNumber, parseSessionKey } from '../../utils/format.js';
 import { channelMeta } from '../../utils/channels.js';
 
-export default function OverviewView({ config, gateway }) {
+const THEME_ICON = { dark: Moon, light: Sun, system: Monitor };
+const THEME_NEXT = { dark: 'light', light: 'system', system: 'dark' };
+
+export default function OverviewView({ config, gateway, theme = 'dark', onCycleTheme, user, onLogout }) {
   const { data, loading, error, refresh, lastAt } = useOverview({ gateway });
+  const ThemeIcon = THEME_ICON[theme] ?? Moon;
+  const isOn = gateway.status === 'on';
+
+  // Restart-gateway flow:
+  //   1. Click button → fetch `gateway.restart.preflight` → show confirm modal
+  //   2. User confirms → call `gateway.restart.request`
+  //   3. Watch gateway.status: it'll flip on→off (gateway dies) → on (auto-reconnect)
+  //   4. Show toast on successful return-to-on, surface errors otherwise.
+  const [restartState, setRestartState]   = useState('idle');   // idle | preflight | confirm | restarting | done | error
+  const [preflightData, setPreflightData] = useState(null);
+  const [restartError,  setRestartError]  = useState('');
+  const wasOnBeforeRestart = useRef(false);
+
+  // Detect the on→off→on cycle that proves the gateway came back up.
+  useEffect(() => {
+    if (restartState !== 'restarting') return;
+    // First time the status drops off, mark that we saw the restart begin.
+    if (gateway.status === 'off' || gateway.status === 'error') {
+      wasOnBeforeRestart.current = true;
+    }
+    // Once we've seen the drop AND we're back on, declare success.
+    if (wasOnBeforeRestart.current && gateway.status === 'on') {
+      setRestartState('done');
+      wasOnBeforeRestart.current = false;
+      setTimeout(() => setRestartState('idle'), 4000);
+    }
+  }, [gateway.status, restartState]);
+
+  const openRestartConfirm = async () => {
+    if (!isOn) return;
+    setRestartError('');
+    setRestartState('preflight');
+    try {
+      const p = await gateway.restartPreflight();
+      setPreflightData(p);
+      setRestartState('confirm');
+    } catch (e) {
+      setRestartError(`Preflight failed: ${e.message}`);
+      setRestartState('error');
+    }
+  };
+
+  const confirmRestart = async () => {
+    setRestartState('restarting');
+    setRestartError('');
+    try {
+      await gateway.restartGateway('manual UI restart');
+      // Don't flip back to idle here — the useEffect above tracks the on/off
+      // status cycle and transitions us to 'done' when the gateway returns.
+    } catch (e) {
+      // If the gateway closed the socket before responding, the request
+      // will reject with "Gateway closed". That's actually a *success*
+      // signal — the restart did happen, we just lost the ack. Treat the
+      // status cycle (off → on) as authoritative.
+      if (!/closed|not connected/i.test(e.message)) {
+        setRestartError(e.message);
+        setRestartState('error');
+      }
+    }
+  };
 
   return (
     <div className="ov-view">
+
+      {/* Restart confirm + progress dialog. Renders only while the flow is
+          active; closing returns to idle. */}
+      {(restartState === 'confirm' || restartState === 'restarting' ||
+        restartState === 'done'    || restartState === 'error') && (
+        <RestartDialog
+          state={restartState}
+          preflight={preflightData}
+          error={restartError}
+          gatewayStatus={gateway.status}
+          onConfirm={confirmRestart}
+          onCancel={() => { setRestartState('idle'); setRestartError(''); }}
+        />
+      )}
 
       <header className="ov-head">
         <div>
           <h1 className="ov-h1">Overview</h1>
           <p className="ov-sub">Status, entry points, health.</p>
         </div>
-        <button
-          className="ov-refresh"
-          onClick={refresh}
-          disabled={loading || gateway.status !== 'on'}
-          title="Refresh"
-        >
-          <RefreshCw size={14} className={loading ? 'spin' : ''} />
-          <span>{loading ? 'Refreshing…' : 'Refresh'}</span>
-        </button>
+        {/* Header actions: Status pill → Connect/Disconnect → Refresh → Theme.
+            The status pill replaces the in-card on/off indicator so the user
+            sees connection state immediately, at the top of the page. The
+            primary action button toggles between Connect (offline) and
+            Disconnect (online). */}
+        <div className="ov-head-actions">
+          <span className={`ov-status ov-status--${gateway.status}`}>
+            <span className="ov-dot" /> {gateway.status}
+          </span>
+          {isOn ? (
+            <button
+              className="ov-btn"
+              onClick={gateway.disconnect}
+              title="Close the WebSocket to the gateway"
+            >
+              <PowerOff size={14} />
+              <span>Disconnect</span>
+            </button>
+          ) : (
+            <button
+              className="ov-btn ov-btn--primary"
+              onClick={gateway.reconnect}
+              title="Connect to gateway"
+            >
+              <Plug size={14} />
+              <span>Connect</span>
+            </button>
+          )}
+          <button
+            className="ov-refresh"
+            onClick={refresh}
+            disabled={loading || !isOn}
+            title="Refresh"
+          >
+            <RefreshCw size={14} className={loading ? 'spin' : ''} />
+            <span>{loading ? 'Refreshing…' : 'Refresh'}</span>
+          </button>
+          {/* Restart-gateway button — sends SIGUSR1-based restart via RPC.
+              Disabled while disconnected (can't preflight) and while a
+              restart is already in flight. Status flips on its own once
+              the gateway reconnects. */}
+          <button
+            className="ov-btn"
+            onClick={openRestartConfirm}
+            disabled={!isOn || restartState === 'preflight' || restartState === 'restarting'}
+            title={isOn ? 'Restart the OpenClaw gateway' : 'Connect first'}
+          >
+            <RotateCw size={14} className={restartState === 'restarting' ? 'spin' : ''} />
+            <span>
+              {restartState === 'preflight'  ? 'Checking…'
+              : restartState === 'restarting' ? 'Restarting…'
+              : restartState === 'done'       ? 'Restarted ✓'
+              : 'Restart'}
+            </span>
+          </button>
+          {onCycleTheme && (
+            <button
+              className="ov-btn"
+              onClick={onCycleTheme}
+              title={`Theme: ${theme} (click for ${THEME_NEXT[theme]})`}
+            >
+              <ThemeIcon size={14} />
+              <span style={{ textTransform: 'capitalize' }}>{theme}</span>
+            </button>
+          )}
+          {onLogout && (
+            <button
+              className="ov-btn"
+              onClick={onLogout}
+              title={user?.email ? `Sign out (${user.email})` : 'Sign out'}
+            >
+              <LogOut size={14} />
+              <span>{user?.name || user?.email?.split('@')[0] || 'Sign out'}</span>
+            </button>
+          )}
+        </div>
       </header>
 
       <GatewayAccessCard config={config} gateway={gateway} />
@@ -152,18 +299,6 @@ function GatewayAccessCard({ config, gateway }) {
         </Field>
       </div>
 
-      <div className="ov-card-actions">
-        <button
-          className="ov-btn ov-btn--primary"
-          onClick={gateway.reconnect}
-          disabled={gateway.status === 'on'}
-        >
-          {gateway.status === 'on' ? 'Connected' : 'Connect'}
-        </button>
-        <span className={`ov-status ov-status--${gateway.status}`}>
-          <span className="ov-dot" /> {gateway.status}
-        </span>
-      </div>
     </section>
   );
 }
@@ -348,4 +483,115 @@ function channelsHint(ch) {
 function truncate(s, n) {
   if (!s) return '';
   return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+// ── Restart-gateway confirm + progress dialog ────────────────────────────
+//
+// Four visual states driven by the parent's `state` prop:
+//   confirm    — preflight loaded, ask user to confirm
+//   restarting — request sent, waiting for socket cycle (off → on)
+//   done       — gateway is back; show success briefly
+//   error      — preflight or request failed; show message
+//
+// We deliberately show the preflight blockers (active tasks, queue size)
+// so the user understands what's happening — same info the CLI prints.
+function RestartDialog({ state, preflight, error, gatewayStatus, onConfirm, onCancel }) {
+  const counts = preflight?.counts;
+  const blockers = preflight?.blockers ?? [];
+  const safe     = preflight?.safe;
+
+  return (
+    <div className="dialog-overlay" onClick={state === 'restarting' ? undefined : onCancel}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ minWidth: 420 }}>
+        <h3>
+          {state === 'confirm'    && 'Restart gateway?'}
+          {state === 'restarting' && 'Restarting gateway…'}
+          {state === 'done'       && 'Gateway restarted ✓'}
+          {state === 'error'      && 'Restart failed'}
+        </h3>
+
+        {state === 'confirm' && (
+          <>
+            <p style={{ marginBottom: 12, fontSize: 13.5, color: 'var(--text-muted)' }}>
+              {safe
+                ? 'No active work — restart will be immediate.'
+                : 'Some work is in progress. The gateway will defer the restart until safe.'}
+            </p>
+
+            {counts && (
+              <div className="ov-stat-row" style={{ marginBottom: 12 }}>
+                <Mini label="Queue"   value={counts.queueSize} />
+                <Mini label="Pending" value={counts.pendingReplies} />
+                <Mini label="Runs"    value={counts.embeddedRuns} />
+                <Mini label="Tasks"   value={counts.activeTasks} />
+              </div>
+            )}
+
+            {blockers.length > 0 && (
+              <ul style={{ margin: '0 0 14px', paddingLeft: 18, fontSize: 12.5, color: 'var(--text-muted)' }}>
+                {blockers.map((b, i) => <li key={i}>{b.message}</li>)}
+              </ul>
+            )}
+
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              The WS will drop briefly; you'll see <code className="page-mono">connecting</code> then
+              <code className="page-mono"> on</code> when it's ready again.
+            </p>
+          </>
+        )}
+
+        {state === 'restarting' && (
+          <>
+            <p style={{ marginBottom: 8, fontSize: 13.5 }}>
+              Gateway is restarting. Current socket status:
+              <span className={`status-chip status-chip--${gatewayStatus}`} style={{ marginLeft: 8 }}>
+                <span className="ov-dot" /> {gatewayStatus}
+              </span>
+            </p>
+            <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>
+              Waiting for reconnect — this usually takes a few seconds.
+            </p>
+          </>
+        )}
+
+        {state === 'done' && (
+          <p style={{ margin: 0, fontSize: 13.5 }}>
+            Gateway is back online and reconnected.
+          </p>
+        )}
+
+        {state === 'error' && (
+          <p className="page-toast page-toast--error" style={{ margin: 0 }}>
+            {error || 'Unknown error'}
+          </p>
+        )}
+
+        <div className="dialog-actions" style={{ marginTop: 18 }}>
+          {state === 'confirm' && (
+            <>
+              <button className="dialog-cancel" onClick={onCancel}>Cancel</button>
+              <button className="dialog-confirm" onClick={onConfirm}>
+                {safe ? 'Restart now' : 'Schedule restart'}
+              </button>
+            </>
+          )}
+          {(state === 'done' || state === 'error') && (
+            <button className="dialog-confirm" onClick={onCancel}>Close</button>
+          )}
+          {state === 'restarting' && (
+            <button className="dialog-cancel" disabled>Restarting…</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Mini({ label, value }) {
+  return (
+    <div className="ov-tile" style={{ padding: '10px 14px' }}>
+      <div className="ov-tile-title" style={{ fontSize: 10 }}>{label}</div>
+      <div className="ov-tile-value" style={{ fontSize: 18 }}>{value ?? 0}</div>
+    </div>
+  );
 }

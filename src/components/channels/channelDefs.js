@@ -90,6 +90,74 @@ export const SUPPORTED_CHANNELS = [
     ],
     fields: [],
   },
+  // iMessage is fundamentally different from token-based channels — there's
+  // no remote API. Mapping:
+  //   • Requires a macOS host running the gateway (or SSH'd via remoteHost)
+  //   • Uses the `imsg` CLI that reads chat.db and talks to the Messages app
+  //   • Must be granted Full Disk Access (System Settings → Privacy & Security)
+  //   • allowFrom is required for security (whitelist of handles/chat_ids)
+  // Fields mirror IMessageAccountConfig from
+  //   openclaw/src/config/types.imessage.ts (allowFrom, cliPath, dbPath,
+  //   service, defaultTo, remoteHost). Optional advanced fields like
+  //   attachmentRoots / groupPolicy are kept out of this initial pass.
+  {
+    id: 'imessage',
+    name: 'iMessage',
+    description: 'Send and receive iMessage / SMS via the macOS Messages app (requires a Mac)',
+    color: '#1DC855',
+    docsUrl: 'https://github.com/abhi1693/openclaw#imessage',
+    auth: 'token',
+    instructions: [
+      'This channel requires the gateway (or a reachable Mac via SSH) to be on macOS with the Messages app signed in.',
+      'Install the imsg CLI on the Mac. From your terminal: brew tap abhi1693/openclaw && brew install imsg',
+      'Grant Full Disk Access to imsg / Terminal / the gateway binary in System Settings → Privacy & Security → Full Disk Access. Restart Terminal afterwards.',
+      'Verify imsg can read chat.db: run `imsg ls` on the Mac — you should see your recent chats.',
+      'Fill in the Allowed Handles list below — comma-separated phone numbers or Apple IDs that the bot will accept messages from. This is required for safety.',
+      'Save & Connect, then restart the gateway.',
+    ],
+    fields: [
+      {
+        id: 'allowFrom',
+        label: 'Allowed Handles',
+        placeholder: 'e.g. +14155551212, you@icloud.com',
+        required: true,
+        description: 'Comma-separated phone numbers (E.164) or Apple IDs. The bot ignores messages from anyone else — required for security.',
+      },
+      {
+        id: 'service',
+        label: 'Send Service',
+        options: [
+          { value: 'auto',     label: 'auto — iMessage when possible, SMS as fallback' },
+          { value: 'imessage', label: 'imessage — iMessage only' },
+          { value: 'sms',      label: 'sms — always send SMS' },
+        ],
+        placeholder: 'auto (recommended)',
+        required: false,
+        description: 'Default delivery channel when sending. auto picks the best available.',
+      },
+      {
+        id: 'defaultTo',
+        label: 'Default Recipient',
+        placeholder: 'e.g. +14155551212',
+        required: false,
+        description: 'Optional default handle for outbound replies when no explicit target is set.',
+      },
+      {
+        id: 'cliPath',
+        label: 'imsg CLI Path',
+        placeholder: 'imsg (default — leave blank unless installed elsewhere)',
+        required: false,
+        description: 'Override only if imsg isn\'t on the gateway\'s $PATH.',
+      },
+      {
+        id: 'remoteHost',
+        label: 'Remote Mac Host',
+        placeholder: 'e.g. you@mac.local',
+        required: false,
+        description: 'Only if the gateway runs on a non-Mac host; SSH target where imsg lives. Leave blank for local-Mac setups.',
+      },
+    ],
+  },
 ];
 
 export function getChannelDef(id) {
