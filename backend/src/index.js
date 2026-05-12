@@ -9,6 +9,7 @@ import { requireAuth } from './auth/middleware.js';
 // API-only validation — worker doesn't need APP_TOKEN.
 requireAppToken();
 
+import authRouter         from './routes/auth.js';
 import healthRouter       from './routes/health.js';
 import orgsRouter         from './routes/orgs.js';
 import boardGroupsRouter  from './routes/board-groups.js';
@@ -54,6 +55,11 @@ app.use(express.json({ limit: '5mb' }));
 // ── Public routes ───────────────────────────────────────────────────────
 app.get('/', (req, res) => res.json({ name: 'leonardo-api', ok: true }));
 app.use('/api/v1/health', healthRouter);
+
+// /auth/register + /auth/login are public; /auth/me is internally guarded.
+// Tight rate limit so attackers can't brute-force passwords.
+const authLimiter = rateLimit({ windowMs: 60_000, max: 20 });
+app.use('/api/v1/auth', authLimiter, authRouter);
 
 // ── Authed routes ───────────────────────────────────────────────────────
 const writeLimiter = rateLimit({ windowMs: 60_000, max: 120 });

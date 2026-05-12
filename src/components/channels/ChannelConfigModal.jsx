@@ -172,16 +172,40 @@ function FormField({ field, value, revealed, onToggleReveal, onChange }) {
         {field.label} {field.required && <span className="ch-required">*</span>}
       </label>
       <div className={field.secret ? 'ov-input-wrap' : ''}>
-        <input
-          id={`ch-field-${field.id}`}
-          className="ov-input"
-          type={inputType}
-          value={value}
-          placeholder={field.placeholder}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(e) => onChange(e.target.value)}
-        />
+        {field.options ? (
+          <select
+            id={`ch-field-${field.id}`}
+            className="ov-input"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            <option value="">{field.placeholder ?? '— Select —'}</option>
+            {field.options.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        ) : field.textarea ? (
+          <textarea
+            id={`ch-field-${field.id}`}
+            className="ov-input"
+            rows={3}
+            value={value}
+            placeholder={field.placeholder}
+            spellCheck={false}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        ) : (
+          <input
+            id={`ch-field-${field.id}`}
+            className="ov-input"
+            type={inputType}
+            value={value}
+            placeholder={field.placeholder}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        )}
         {field.secret && (
           <button
             type="button"

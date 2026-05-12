@@ -17,6 +17,14 @@ export default function ChannelIcon({ id, size = 20 }) {
       </svg>
     );
   }
+  if (id === 'imessage') {
+    // Apple Messages-style rounded speech bubble with the classic tail.
+    return (
+      <svg {...common}>
+        <path d="M12 2C6.48 2 2 5.92 2 10.78c0 2.71 1.4 5.13 3.61 6.7-.09.78-.42 2.3-1.55 3.94 1.94-.36 3.69-1.05 4.97-1.93C10.04 19.78 11 19.94 12 19.94c5.52 0 10-3.92 10-9.16C22 5.92 17.52 2 12 2Z" />
+      </svg>
+    );
+  }
   if (id === 'whatsapp') {
     return (
       <svg {...common}>

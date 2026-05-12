@@ -11,7 +11,10 @@
 
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
-import { db, tasks, taskRuns, virtualAgents, activityLog, webhooks, boards } from '../../db/index.js';
+import {
+  db, tasks, taskRuns, virtualAgents, activityLog, webhooks, boards,
+  approvals, approvalTaskLinks,
+} from '../../db/index.js';
 import { publishSse } from '../../sse/bus.js';
 import { enqueueWebhookDelivery } from '../../queue.js';
 
@@ -152,6 +155,32 @@ export async function runTaskAssign({ taskId, gateway }) {
     type:    `task.${outcome}`,
     payload: { taskId, runId: run.id, error: errMsg ?? undefined },
   });
+
+  // When a task lands in `review`, auto-create a pending approval so it
+  // shows up in the Approvals page without the reviewer having to add it
+  // manually. The approval references this run's transcript snippet so the
+  // reviewer can quickly judge the output. Skipped for `done`/`inbox`.
+  if (outcome === 'review') {
+    const reasoning = `Task "${task.title}" finished and is awaiting review.`;
+    const [approvalRow] = await db.insert(approvals).values({
+      boardId:       task.boardId,
+      taskId:        taskId,
+      agentId:       task.assigneeAgentId,
+      actionType:    'task.complete',
+      payload:       { reason: reasoning, runId: run.id, transcriptPreview: buffer.slice(0, 500) },
+      leadReasoning: reasoning,
+      status:        'pending',
+    }).returning();
+    await db.insert(approvalTaskLinks).values({
+      approvalId: approvalRow.id,
+      taskId:     taskId,
+    });
+    await db.insert(activityLog).values({
+      type:    'approval.created',
+      payload: { id: approvalRow.id, taskIds: [taskId], agentId: task.assigneeAgentId, actionType: 'task.complete', autoCreated: true },
+    });
+    publishSse('approvals', 'approval', { kind: 'created', approval: approvalRow, taskIds: [taskId] });
+  }
 
   publishSse(`task:${taskId}`, 'status', {
     taskId, status: outcome, error: errMsg ?? undefined, transcript: buffer,

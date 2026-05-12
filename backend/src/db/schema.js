@@ -6,6 +6,21 @@ import {
   pgTable, uuid, text, timestamp, jsonb, integer, boolean, index,
 } from 'drizzle-orm/pg-core';
 
+// ── Users (email/password auth) ──────────────────────────────────────────
+// Passwords are stored as bcrypt hashes ($2b$10$…); never log this column.
+// `email` is normalised lowercase on write and indexed unique.
+
+export const users = pgTable('users', {
+  id:           uuid('id').primaryKey().defaultRandom(),
+  email:        text('email').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  name:         text('name'),
+  createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  lastLoginAt:  timestamp('last_login_at', { withTimezone: true }),
+}, (t) => ({
+  emailIdx: index('users_email_idx').on(t.email),
+}));
+
 // ── Hierarchy ────────────────────────────────────────────────────────────
 
 export const organizations = pgTable('organizations', {

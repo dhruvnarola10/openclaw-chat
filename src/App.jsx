@@ -28,11 +28,16 @@ import ErrorBoundary   from './components/common/ErrorBoundary.jsx';
 
 export default function App() {
   const auth = useAuth();
-  if (!auth.authed) return <LoginScreen onSubmit={auth.login} />;
-  return <Authed onLogout={auth.logout} gated={auth.gated} />;
+  // While we re-validate a saved token on boot, show nothing — avoids a
+  // flash of the login screen for already-signed-in users.
+  if (auth.authed && !auth.bootChecked) return <div className="login-screen" />;
+  if (!auth.authed) {
+    return <LoginScreen onLogin={auth.login} onRegister={auth.register} />;
+  }
+  return <Authed onLogout={auth.logout} user={auth.user} />;
 }
 
-function Authed() {
+function Authed({ onLogout, user }) {
   const [view, setView] = useState('overview');
   // When set, ChatView will join this session on next render and clear it.
   // Used by CronView's run-history "Open in chat" deep-link.
@@ -72,10 +77,12 @@ function Authed() {
 
   return (
     <div className="app">
-      <NavRail view={view} onChange={setView} theme={theme} onCycleTheme={cycleTheme} />
+      <NavRail view={view} onChange={setView} />
 
       <ErrorBoundary key={view}>
-        {view === 'overview' && <OverviewView config={configBundle} gateway={gateway} />}
+        {view === 'overview' && <OverviewView config={configBundle} gateway={gateway}
+                                              theme={theme} onCycleTheme={cycleTheme}
+                                              user={user} onLogout={onLogout} />}
         {view === 'chat'     && <ChatView config={configBundle} models={modelsBundle} threadOps={threadOps} gateway={gateway}
                                           pendingJoinKey={pendingJoinKey} onPendingJoinHandled={() => setPendingJoinKey(null)} />}
         {view === 'usage'    && <UsageView config={configBundle} gateway={gateway} />}

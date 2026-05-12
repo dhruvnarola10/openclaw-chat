@@ -1,8 +1,11 @@
-// Single shared bearer-token guard. Apply with `app.use(requireAuth)`.
-// Uses constant-time comparison so token-length-based timing attacks are
-// not viable.
+// Bearer-token guard supporting two identities:
+//   • APP_TOKEN (service / curl / dev scripts) — constant-time compared.
+//   • JWT issued by /auth/login — verified with env.jwtSecret.
+// On success, req.user is set to { kind: 'service' } or
+// { kind: 'user', id, email, name }.
 
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import { env } from '../env.js';
 
 function safeEq(a, b) {
@@ -21,8 +24,32 @@ export function requireAuth(req, res, next) {
   const fromHeader = m?.[1] ?? '';
   const fromQuery  = req.path.endsWith('/stream') ? (req.query.token ?? '') : '';
   const token = fromHeader || fromQuery;
-  if (!safeEq(token, env.appToken)) {
-    return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'invalid bearer token' } });
+
+  if (!token) {
+    return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'missing bearer token' } });
   }
-  next();
+
+  // 1. Service token (legacy / scripts).
+  if (env.appToken && safeEq(token, env.appToken)) {
+    req.user = { kind: 'service' };
+    return next();
+  }
+
+  // 2. User JWT.
+  if (env.jwtSecret) {
+    try {
+      const payload = jwt.verify(token, env.jwtSecret);
+      req.user = {
+        kind:  'user',
+        id:    payload.sub,
+        email: payload.email,
+        name:  payload.name ?? null,
+      };
+      return next();
+    } catch {
+      // fall through to 401
+    }
+  }
+
+  return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'invalid bearer token' } });
 }

@@ -4,7 +4,7 @@
 // the existing PageHeader / page-table / dialog-overlay styles.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronRight, MessageSquare, Plus, Send, Trash2, X as XIcon } from 'lucide-react';
+import { Check, ChevronRight, MessageSquare, Pencil, Plus, Send, Trash2, X as XIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { mdComponents } from '../chat/markdown.jsx';
@@ -267,6 +267,7 @@ function BoardDetail({ board, push, popTo, onOpenSession }) {
   );
   const agents = useApi(tab === 'tasks' ? '/agents' : null, [tab]);
   const [showCreate, setShowCreate] = useState(false);
+  const [editing,    setEditing]    = useState(null);   // task row being edited
   const items = data?.items ?? [];
 
   const agentOptions = (agents.data?.items ?? []).map((a) => ({
@@ -424,6 +425,9 @@ function BoardDetail({ board, push, popTo, onOpenSession }) {
                       {t.status === 'in_progress' && (
                         <button className="ov-btn" title="Cancel" onClick={() => cancel(t.id)}>Stop</button>
                       )}
+                      <button className="row-action" title="Edit" onClick={() => setEditing(t)}>
+                        <Pencil size={12} />
+                      </button>
                       <button className="row-action row-action--danger" title="Delete" onClick={() => remove(t.id)}>
                         <Trash2 size={12} />
                       </button>
@@ -439,34 +443,13 @@ function BoardDetail({ board, push, popTo, onOpenSession }) {
       {tab === 'tasks' && showCreate && (
         <CreateModal
           title="New task"
-          fields={[
-            { key: 'title',       label: 'Title', required: true },
-            { key: 'description', label: 'Description (sent to the agent as the prompt)', textarea: true },
-            {
-              key: 'priority', label: 'Priority',
-              select: [
-                { value: 'low',    label: 'Low' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'high',   label: 'High' },
-                { value: 'urgent', label: 'Urgent' },
-              ],
-              placeholder: 'medium',
-            },
-            {
-              key: 'assignee', label: 'Assign to',
-              select: agentOptions, placeholder: 'Pick an agent',
-            },
-            {
-              key: 'runAfter', label: 'Run immediately after create',
-              checkbox: true, default: true,
-            },
-          ]}
+          fields={taskFields(agentOptions, /* withRunAfter */ true)}
           onCancel={() => setShowCreate(false)}
           onSubmit={async (vals) => {
             const body = {
-              title: vals.title,
-              description: vals.description,
-              priority: vals.priority || 'medium',
+              title:       vals.title.trim(),
+              description: vals.description.trim(),
+              priority:    vals.priority || 'medium',
             };
             if (vals.assignee) {
               const [kind, id] = vals.assignee.split(':');
@@ -477,6 +460,40 @@ function BoardDetail({ board, push, popTo, onOpenSession }) {
               try { await api.post(`/tasks/${created.id}/assign`, {}); } catch (_) { /* surfacing happens via list refresh */ }
             }
             setShowCreate(false); refresh();
+          }}
+        />
+      )}
+
+      {tab === 'tasks' && editing && (
+        <CreateModal
+          title={`Edit "${editing.title}"`}
+          submitLabel="Save"
+          fields={taskFields(agentOptions, /* withRunAfter */ false)}
+          initial={{
+            title:       editing.title ?? '',
+            description: editing.description ?? '',
+            priority:    editing.priority ?? 'medium',
+            assignee:    editing.assigneeAgentId
+              ? `${editing.assigneeKind ?? 'real'}:${editing.assigneeAgentId}`
+              : '',
+          }}
+          onCancel={() => setEditing(null)}
+          onSubmit={async (vals) => {
+            const patch = {
+              title:       vals.title.trim(),
+              description: vals.description.trim(),
+              priority:    vals.priority || 'medium',
+            };
+            if (vals.assignee) {
+              const [kind, id] = vals.assignee.split(':');
+              patch.assigneeAgentId = id;
+              patch.assigneeKind    = kind;
+            } else {
+              patch.assigneeAgentId = null;
+              patch.assigneeKind    = null;
+            }
+            await api.patch(`/tasks/${editing.id}`, patch);
+            setEditing(null); refresh();
           }}
         />
       )}
@@ -720,6 +737,13 @@ function BoardWebhooks({ boardId }) {
 function TaskDetail({ task: hint, onOpenSession }) {
   const { data, loading, refresh } = useApi(`/tasks/${hint.id}`, [hint.id]);
   const [stream, setStream] = useState({ status: null, text: '' });
+  const [editing, setEditing] = useState(false);
+  // Agents list is needed for the assignee dropdown in the edit modal.
+  const agents = useApi(editing ? '/agents' : null, [editing]);
+  const agentOptions = (agents.data?.items ?? []).map((a) => ({
+    value: `${a.kind ?? 'real'}:${a.id}`,
+    label: `${a.name ?? a.id}${a.kind === 'virtual' ? ' (virtual)' : ''}`,
+  }));
 
   // Open SSE when task is running OR on mount in case the worker is mid-run.
   useEffect(() => {
@@ -780,6 +804,12 @@ function TaskDetail({ task: hint, onOpenSession }) {
           )}
           {liveStatus === 'in_progress' && (
             <button className="ov-btn" onClick={cancel}>Stop</button>
+          )}
+          {/* Edit — available in any state, never destructive. */}
+          {liveStatus !== 'in_progress' && (
+            <button className="ov-btn" onClick={() => setEditing(true)} title="Edit task">
+              <Pencil size={14} /> Edit
+            </button>
           )}
           {/* Open the chat session this task ran in (same UX as cron history). */}
           {data.sessionKey && onOpenSession && (
@@ -846,6 +876,40 @@ function TaskDetail({ task: hint, onOpenSession }) {
       )}
 
       <CommentsSection taskId={data.id} />
+
+      {editing && (
+        <CreateModal
+          title={`Edit "${data.title}"`}
+          submitLabel="Save"
+          fields={taskFields(agentOptions, /* withRunAfter */ false)}
+          initial={{
+            title:       data.title ?? '',
+            description: data.description ?? '',
+            priority:    data.priority ?? 'medium',
+            assignee:    data.assigneeAgentId
+              ? `${data.assigneeKind ?? 'real'}:${data.assigneeAgentId}`
+              : '',
+          }}
+          onCancel={() => setEditing(false)}
+          onSubmit={async (vals) => {
+            const patch = {
+              title:       vals.title.trim(),
+              description: vals.description.trim(),
+              priority:    vals.priority || 'medium',
+            };
+            if (vals.assignee) {
+              const [kind, id] = vals.assignee.split(':');
+              patch.assigneeAgentId = id;
+              patch.assigneeKind    = kind;
+            } else {
+              patch.assigneeAgentId = null;
+              patch.assigneeKind    = null;
+            }
+            await api.patch(`/tasks/${data.id}`, patch);
+            setEditing(false); refresh();
+          }}
+        />
+      )}
     </>
   );
 }
@@ -907,18 +971,83 @@ function CommentsSection({ taskId }) {
   );
 }
 
+// ── Task field schema (shared by Create + Edit modals) ──────────────────
+//
+// Title + description are both required. The placeholders are real-world
+// examples so users see the shape of a good task at a glance.
+function taskFields(agentOptions, withRunAfter) {
+  const fields = [
+    {
+      key: 'title',
+      label: 'Title',
+      required: true,
+      placeholder: 'e.g. Audit homepage meta tags for SEO best practices',
+    },
+    {
+      key: 'description',
+      label: 'Description (sent to the agent as the prompt)',
+      required: true,
+      textarea: true,
+      placeholder:
+        'e.g. Review the homepage and list every <title>, <meta name="description">, ' +
+        'and OpenGraph tag. Flag any over Google\'s 60/160 char limits, ' +
+        'and suggest improved copy. Output as a markdown table.',
+    },
+    {
+      key: 'priority',
+      label: 'Priority',
+      select: [
+        { value: 'low',    label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high',   label: 'High' },
+        { value: 'urgent', label: 'Urgent' },
+      ],
+      placeholder: 'medium',
+    },
+    {
+      key: 'assignee',
+      label: 'Assign to',
+      select: agentOptions,
+      placeholder: 'Pick an agent',
+    },
+  ];
+  if (withRunAfter) {
+    fields.push({
+      key: 'runAfter',
+      label: 'Run immediately after create',
+      checkbox: true,
+      default: true,
+    });
+  }
+  return fields;
+}
+
 // ── Reusable create modal ───────────────────────────────────────────────
 
-function CreateModal({ title, fields, onSubmit, onCancel }) {
-  // Seed defaults from any field with a `default`. Lets us prefill checkboxes
-  // (e.g. "run immediately after create" defaulted to true).
+function CreateModal({ title, fields, onSubmit, onCancel, initial, submitLabel = 'Create' }) {
+  // Seed values from `initial` (edit mode) first, then fall back to per-field
+  // `default` values (e.g. "run immediately after create" defaulted to true).
   const [vals,  setVals]  = useState(() => {
     const init = {};
-    for (const f of fields ?? []) if (f.default !== undefined) init[f.key] = f.default;
+    for (const f of fields ?? []) {
+      if (initial && f.key in initial) init[f.key] = initial[f.key];
+      else if (f.default !== undefined) init[f.key] = f.default;
+    }
     return init;
   });
   const [busy,  setBusy]  = useState(false);
   const [err,   setErr]   = useState('');
+
+  // HTML5-validation guard: required fields must be non-empty (after trim
+  // for text). We re-check here in addition to the input's `required`
+  // attribute so we can show a friendly error instead of relying on
+  // browser tooltips alone.
+  const missingRequired = (fields ?? []).find((f) => {
+    if (!f.required) return false;
+    const v = vals[f.key];
+    if (typeof v === 'string') return v.trim() === '';
+    return v == null;
+  });
 
   return (
     <div className="dialog-overlay" onClick={onCancel}>
@@ -945,16 +1074,19 @@ function CreateModal({ title, fields, onSubmit, onCancel }) {
                     <label className="ov-label">{f.label}{f.required ? ' *' : ''}</label>
                     {f.select ? (
                       <select className="ov-input" value={vals[f.key] ?? ''}
+                        required={f.required}
                         onChange={(e) => setVals({ ...vals, [f.key]: e.target.value })}>
                         <option value="">{f.placeholder ?? '—'}</option>
                         {f.select.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                       </select>
                     ) : f.textarea ? (
                       <textarea className="ov-input" rows={4} placeholder={f.placeholder ?? ''}
+                        required={f.required}
                         value={vals[f.key] ?? ''}
                         onChange={(e) => setVals({ ...vals, [f.key]: e.target.value })} />
                     ) : (
                       <input className="ov-input" placeholder={f.placeholder ?? ''}
+                        required={f.required}
                         value={vals[f.key] ?? ''}
                         onChange={(e) => setVals({ ...vals, [f.key]: e.target.value })} />
                     )}
@@ -964,10 +1096,15 @@ function CreateModal({ title, fields, onSubmit, onCancel }) {
             ))}
           </div>
           {err && <p className="page-toast page-toast--error" style={{ marginTop: 10 }}>{err}</p>}
+          {missingRequired && !err && (
+            <p className="page-muted" style={{ marginTop: 8, fontSize: 12 }}>
+              {missingRequired.label} is required.
+            </p>
+          )}
           <div className="dialog-actions" style={{ marginTop: 16 }}>
             <button type="button" className="dialog-cancel" onClick={onCancel} disabled={busy}>Cancel</button>
-            <button type="submit" className="dialog-confirm" disabled={busy}>
-              {busy ? 'Saving…' : 'Create'}
+            <button type="submit" className="dialog-confirm" disabled={busy || !!missingRequired}>
+              {busy ? 'Saving…' : submitLabel}
             </button>
           </div>
         </form>

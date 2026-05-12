@@ -5,8 +5,8 @@
 import { useEffect, useState } from 'react';
 import {
   Activity, BarChart3, Bot, CheckCircle2, ChevronLeft, ChevronRight,
-  ChevronDown, Clock, FolderKanban, LayoutDashboard, Layers, ListChecks,
-  MessageSquare, Monitor, Moon, Plug, Settings, Sparkles, Sun, Tag, Users, Zap,
+  ChevronDown, Clock, FolderKanban, LayoutDashboard,
+  MessageSquare, Plug, Sparkles, Tag, Users, Zap,
 } from 'lucide-react';
 import { load, save } from '../../utils/storage.js';
 
@@ -15,7 +15,8 @@ const SECTIONS = [
   {
     id: 'main',
     items: [
-      { id: 'overview',  label: 'Overview',  icon: LayoutDashboard },
+      // Overview lives in the bottom strip next to the theme button now;
+      // see `navrail2-bottom` below.
       { id: 'chat',      label: 'Chat',      icon: MessageSquare },
       { id: 'activity',  label: 'Activity',  icon: Activity },
     ],
@@ -53,14 +54,15 @@ const SECTIONS = [
   },
 ];
 
-export const VIEWS = SECTIONS.flatMap((s) => s.items);
-
-const THEME_ICON = { dark: Moon, light: Sun, system: Monitor };
-const THEME_NEXT = { dark: 'light', light: 'system', system: 'dark' };
+// Overview is rendered separately in the bottom strip but still a valid view.
+export const VIEWS = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  ...SECTIONS.flatMap((s) => s.items),
+];
 
 const STORAGE_KEY = 'oc-nav-state';
 
-export default function NavRail({ view, onChange, theme = 'dark', onCycleTheme }) {
+export default function NavRail({ view, onChange }) {
   // Persisted UI state: collapsed (whole rail) + which sections are open
   const [state, setState] = useState(() => load(STORAGE_KEY, {
     collapsed: false,
@@ -75,7 +77,6 @@ export default function NavRail({ view, onChange, theme = 'dark', onCycleTheme }
   }));
   const toggleCollapsed = () => setState((s) => ({ ...s, collapsed: !s.collapsed }));
 
-  const ThemeIcon = THEME_ICON[theme] ?? Moon;
   const collapsed = state.collapsed;
 
   return (
@@ -105,16 +106,14 @@ export default function NavRail({ view, onChange, theme = 'dark', onCycleTheme }
       </div>
 
       <div className="navrail2-bottom">
-        {onCycleTheme && (
-          <button
-            className={`navrail2-item${collapsed ? ' navrail2-item--collapsed' : ''}`}
-            onClick={onCycleTheme}
-            title={`Theme: ${theme} (click for ${THEME_NEXT[theme]})`}
-          >
-            <ThemeIcon size={16} />
-            {!collapsed && <span>{theme}</span>}
-          </button>
-        )}
+        <button
+          className={`navrail2-item${view === 'overview' ? ' navrail2-item--active' : ''}${collapsed ? ' navrail2-item--collapsed' : ''}`}
+          onClick={() => onChange('overview')}
+          title="Overview"
+        >
+          <LayoutDashboard size={16} />
+          {!collapsed && <span>Overview</span>}
+        </button>
       </div>
     </nav>
   );
