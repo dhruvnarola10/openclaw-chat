@@ -5,12 +5,15 @@
 //   PUT    /channels/:id         — upsert config (create or replace)
 //   DELETE /channels/:id         — remove config
 //
-// Telegram is sourced from the OpenClaw gateway's own files:
+// Telegram & Discord are wired through to the gateway's own files:
 //   ~/.openclaw/openclaw.json                                  (channels.telegram)
 //   ~/.openclaw/credentials/telegram-default-allowFrom.json    (Allowed User IDs)
+//   ~/.openclaw/openclaw.json                                  (channels.discord)
+//   ~/.openclaw/.env                                            (DISCORD_BOT_TOKEN)
 //
-// Discord and WhatsApp don't have a documented integration in this app yet,
-// so they fall back to a local JSON file at backend/data/channels.json.
+// WhatsApp and iMessage don't have a doc-aligned integration yet, so they
+// fall back to a local JSON file at backend/data/channels.json (round-trip
+// in the UI but no propagation to the gateway).
 //
 // After saving Telegram the operator must:
 //   1. Restart the gateway so the new bot token is picked up.
@@ -28,6 +31,9 @@ import {
   readAllowFrom,
   writeAllowFrom,
   parseAllowedUsers,
+  readDotEnvKey,
+  writeDotEnvKey,
+  deleteDotEnvKey,
 } from '../lib/openclaw-config.js';
 
 const router = Router();
@@ -146,7 +152,122 @@ async function deleteTelegram() {
   return existed;
 }
 
-// ── Local serializer for Discord / WhatsApp ─────────────────────────────
+// ── Discord adapter (openclaw.json + ~/.openclaw/.env) ──────────────────
+//
+// Per docs.openclaw.ai/channels/discord, the bot token must be sourced from
+// an env var — managed installs put the value in ~/.openclaw/.env. The
+// openclaw.json holds a reference, not the literal token:
+//
+//   channels.discord = {
+//     enabled: true,
+//     token:   { source: "env", provider: "default", id: "DISCORD_BOT_TOKEN" },
+//     guilds:  { "<GUILD_ID>": { requireMention: false, users: [] } },
+//     groupPolicy: "allowlist",
+//   }
+//
+// Form values:
+//   token     → ~/.openclaw/.env  → DISCORD_BOT_TOKEN
+//   guildId   → channels.discord.guilds.<guildId>
+//   channelId → preserved on the guild entry as `defaultChannelId` so the
+//               agent can target it; not part of the gateway's strict schema
+//               but kept as metadata so the UI round-trips it.
+const DISCORD_TOKEN_VAR = 'DISCORD_BOT_TOKEN';
+
+async function readDiscord() {
+  const cfg = await readOpenclawJson();
+  const dc  = cfg.channels?.discord;
+  const dotEnvToken = await readDotEnvKey(DISCORD_TOKEN_VAR);
+
+  if (!dc && !dotEnvToken) return null;
+
+  // Resolve the token: prefer inline string config (legacy), else env ref.
+  let token = '';
+  if (typeof dc?.token === 'string') {
+    token = dc.token;
+  } else if (dc?.token?.source === 'env') {
+    token = (await readDotEnvKey(dc.token.id || DISCORD_TOKEN_VAR)) ?? '';
+  } else {
+    token = dotEnvToken ?? '';
+  }
+
+  // The form only displays one guild today — pick the first one if multiple
+  // exist (advanced users can edit openclaw.json directly for multi-guild).
+  const guilds = dc?.guilds ?? {};
+  const firstGuildId = Object.keys(guilds)[0] ?? '';
+  const guildEntry   = firstGuildId ? guilds[firstGuildId] : null;
+
+  return {
+    channelId: 'discord',
+    enabled:   dc?.enabled !== false,
+    config: {
+      token,
+      guildId:   firstGuildId,
+      channelId: guildEntry?.defaultChannelId ?? '',
+    },
+    updatedAt: null,
+  };
+}
+
+async function writeDiscord(formValues, enabled) {
+  const token     = String(formValues.token ?? '').trim();
+  const guildId   = String(formValues.guildId ?? '').trim();
+  const channelId = String(formValues.channelId ?? '').trim();
+
+  // 1. Write the token to ~/.openclaw/.env. This is the canonical location
+  //    for the gateway's managed-install pattern.
+  if (token) {
+    await writeDotEnvKey(DISCORD_TOKEN_VAR, token);
+  }
+
+  // 2. Write the discord block to openclaw.json. Use an env reference so
+  //    the gateway looks up DISCORD_BOT_TOKEN at runtime.
+  const result = await mutateOpenclawJson((cfg) => {
+    const dc = cfg.channels.discord ?? {};
+    dc.enabled = enabled ?? true;
+    dc.token   = { source: 'env', provider: 'default', id: DISCORD_TOKEN_VAR };
+    // Default to allowlist policy unless the user has already chosen otherwise.
+    dc.groupPolicy ??= 'allowlist';
+    if (guildId) {
+      dc.guilds ??= {};
+      const existing = dc.guilds[guildId] ?? {};
+      dc.guilds[guildId] = {
+        ...existing,
+        // Keep existing users[] / requireMention if already set.
+        users:          Array.isArray(existing.users) ? existing.users : [],
+        requireMention: existing.requireMention ?? false,
+        ...(channelId ? { defaultChannelId: channelId } : {}),
+      };
+    }
+    cfg.channels.discord = dc;
+    return dc;
+  });
+
+  return {
+    channelId: 'discord',
+    enabled:   result.enabled,
+    config: {
+      token:     token,    // echo back so the UI shows it on next load
+      guildId,
+      channelId,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function deleteDiscord() {
+  let existed = false;
+  await mutateOpenclawJson((cfg) => {
+    if (cfg.channels.discord) {
+      existed = true;
+      delete cfg.channels.discord;
+    }
+  });
+  // Blank the env var so a stale token can't leak in on next restart.
+  await deleteDotEnvKey(DISCORD_TOKEN_VAR);
+  return existed;
+}
+
+// ── Local serializer for WhatsApp / iMessage (fallback) ────────────────
 function serializeLocal(channelId, row) {
   if (!row) return null;
   return {
@@ -164,9 +285,12 @@ router.get('/', async (req, res, next) => {
     const tg = await readTelegram();
     if (tg) items.push(tg);
 
+    const dc = await readDiscord();
+    if (dc) items.push(dc);
+
     const local = await readLocal();
     for (const [id, row] of Object.entries(local)) {
-      if (id === 'telegram') continue;     // openclaw.json is the source of truth
+      if (id === 'telegram' || id === 'discord') continue;   // openclaw.json wins
       items.push(serializeLocal(id, row));
     }
     res.json({ items });
@@ -182,6 +306,11 @@ router.get('/:id', async (req, res, next) => {
       const tg = await readTelegram();
       if (!tg) return res.status(404).json({ error: { code: 'NOT_FOUND' } });
       return res.json(tg);
+    }
+    if (id === 'discord') {
+      const dc = await readDiscord();
+      if (!dc) return res.status(404).json({ error: { code: 'NOT_FOUND' } });
+      return res.json(dc);
     }
     const all = await readLocal();
     const row = all[id];
@@ -201,6 +330,10 @@ router.put('/:id', async (req, res, next) => {
   try {
     if (id === 'telegram') {
       const saved = await writeTelegram(p.data.config, p.data.enabled);
+      return res.status(200).json(saved);
+    }
+    if (id === 'discord') {
+      const saved = await writeDiscord(p.data.config, p.data.enabled);
       return res.status(200).json(saved);
     }
     const saved = await mutateLocal(async (all) => {
@@ -224,6 +357,11 @@ router.delete('/:id', async (req, res, next) => {
   try {
     if (id === 'telegram') {
       const existed = await deleteTelegram();
+      if (!existed) return res.status(404).json({ error: { code: 'NOT_FOUND' } });
+      return res.status(204).end();
+    }
+    if (id === 'discord') {
+      const existed = await deleteDiscord();
       if (!existed) return res.status(404).json({ error: { code: 'NOT_FOUND' } });
       return res.status(204).end();
     }
