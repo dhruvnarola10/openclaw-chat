@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { fetchUsage, USAGE_PRIMARY_METHOD, USAGE_FALLBACK_METHOD } from '../../api/usage.js';
 import { compactNumber } from '../../utils/format.js';
+import PageHeader from '../common/PageHeader.jsx';
 import UsageFilters, { presetToDates } from './UsageFilters.jsx';
 import UsageOverview from './UsageOverview.jsx';
 
@@ -51,18 +52,14 @@ export default function UsageView({ gateway }) {
   };
 
   return (
-    <div className="usage-view">
-      <header className="usage-head">
-        <h1 className="usage-h1">Usage</h1>
-        <p className="usage-sub">API usage and costs.</p>
-      </header>
-
-      <section className="usage-section-head">
-        <h2 className="usage-section">Usage</h2>
-        <p className="usage-section-sub">
-          See where tokens go, when sessions spike, and what drives cost.
-        </p>
-      </section>
+    <div className="ov-view">
+      <PageHeader
+        title="Usage"
+        subtitle="See where tokens go, when sessions spike, and what drives cost."
+        gatewayStatus={gateway.status}
+        refreshing={loading}
+        onRefresh={load}
+      />
 
       <UsageFilters
         range={rangeId}

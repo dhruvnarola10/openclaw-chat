@@ -1737,11 +1737,12 @@ input, textarea { font-family: inherit; color: inherit; }
 }
 .toggle-pill.active {
   color: white;
-  background: #ef4444;
+  background: var(--accent);
 }
 .refresh-pill {
-  background: #ef4444;
+  background: var(--accent);
   color: white;
+  border: 1px solid transparent;
   border-radius: 8px;
   padding: 6px 14px;
   font-size: 12.5px;
@@ -1749,8 +1750,14 @@ input, textarea { font-family: inherit; color: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
 }
-.refresh-pill:disabled { opacity: 0.5; }
+.refresh-pill:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 2px 10px rgba(124, 58, 237, 0.25);
+}
+.refresh-pill:disabled { opacity: 0.5; cursor: not-allowed; }
 .refresh-pill .spinning { animation: spin 0.7s linear infinite; }
 
 /* Cards grid */
@@ -3252,6 +3259,11 @@ input, textarea { font-family: inherit; color: inherit; }
   border-left: 2px solid var(--accent);
 }
 .page-row-active td:first-child { border-left: 2px solid var(--accent); }
+
+/* Clickable row (used in Approvals → opens task on click) */
+.page-row-clickable:hover td {
+  background: rgba(124, 58, 237, 0.06);
+}
 
 /* ─── Custom Select ──────────────────────────────────────────────── */
 .oc-select {

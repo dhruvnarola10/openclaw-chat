@@ -231,6 +231,42 @@
   text-align: center;
 }
 
+/* QR-pairing CLI instructions panel — replaces the dead "Generate QR Code"
+   button for channels that pair via a host-side terminal command. */
+.ch-qr-cli {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 16px;
+}
+.ch-qr-cli-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.ch-qr-cli-head > svg { color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+.ch-qr-cli-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px 8px 14px;
+  margin-bottom: 12px;
+}
+.ch-qr-cli-cmd code { flex: 1; font-size: 12.5px; word-break: break-all; }
+.ch-qr-cli-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+}
+.ch-qr-cli-steps li { margin-bottom: 4px; }
+.ch-qr-cli-steps code { font-size: 11.5px; }
+
 .ch-modal-error {
   padding: 10px 12px;
   border-radius: 8px;

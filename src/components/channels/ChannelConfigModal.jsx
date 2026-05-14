@@ -3,7 +3,7 @@
 // WhatsApp. Values are persisted via the mission-control API.
 
 import { useEffect, useState } from 'react';
-import { BookOpen, ExternalLink, Eye, EyeOff, ShieldCheck, X, QrCode, Loader2, CheckCircle2 } from 'lucide-react';
+import { BookOpen, Check, Copy, ExternalLink, Eye, EyeOff, ShieldCheck, Terminal, X, QrCode, Loader2, CheckCircle2 } from 'lucide-react';
 import { loadChannelConfig, saveChannelConfig } from './channelStore.js';
 
 export default function ChannelConfigModal({ channel, onClose, onSaved }) {
@@ -148,9 +148,14 @@ export default function ChannelConfigModal({ channel, onClose, onSaved }) {
             </button>
           )}
           {isQr ? (
-            <button className="ov-btn ov-btn--primary">
-              <QrCode size={14} />
-              <span>Generate QR Code</span>
+            // QR pairing is a host-side CLI flow (Baileys prints the QR in
+            // a terminal). The gateway exposes no WS method that streams
+            // QR bytes to a browser, so there's nothing for a click to do.
+            // The "Done" button just closes the modal once the user has
+            // run the CLI command and seen the channel turn green.
+            <button className="ov-btn ov-btn--primary" onClick={onClose}>
+              <CheckCircle2 size={14} />
+              <span>Done</span>
             </button>
           ) : (
             <button className="ov-btn ov-btn--primary" onClick={handleSave} disabled={!canSave}>
@@ -226,13 +231,56 @@ function FormField({ field, value, revealed, onToggleReveal, onChange }) {
   );
 }
 
+// QR-based channels (currently just WhatsApp) pair via a CLI command on the
+// gateway host. Baileys prints the QR to the terminal there — there's no
+// gateway RPC that streams QR bytes to a browser, so we can't render the
+// QR here. Instead, we surface the exact CLI command with a copy button
+// and explain the flow.
 function QrSection({ channelId }) {
-  // The QR-login adapter (Baileys) lives in the OpenClaw gateway, not in this
-  // backend. Until that's wired up, this remains a UI placeholder.
+  const [copied, setCopied] = useState(false);
+
+  // WhatsApp's CLI command per docs.openclaw.ai/channels/whatsapp.
+  // Other QR channels (if added later) would map their own command here.
+  const command = channelId === 'whatsapp'
+    ? 'openclaw channels login --channel whatsapp'
+    : `openclaw channels login --channel ${channelId}`;
+
+  const onCopy = async () => {
+    try { await navigator.clipboard.writeText(command); }
+    catch { /* clipboard blocked — fall through */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
-    <div className="ch-qr-placeholder">
-      <QrCode size={48} />
-      <p>Click <strong>Generate QR Code</strong> to start the {channelId} login flow.</p>
+    <div className="ch-qr-cli">
+      <div className="ch-qr-cli-head">
+        <Terminal size={18} />
+        <div>
+          <strong>Run this on the gateway host</strong>
+          <p className="page-muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+            The QR is printed in your terminal — Baileys does the pairing.
+            Once you scan it from your phone the channel will turn green here.
+          </p>
+        </div>
+      </div>
+
+      <div className="ch-qr-cli-cmd">
+        <code className="page-mono">{command}</code>
+        <button className="row-action" onClick={onCopy} title={copied ? 'Copied' : 'Copy'}>
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+      </div>
+
+      <ol className="ch-qr-cli-steps">
+        <li>Open WhatsApp on your phone → <strong>Settings → Linked Devices → Link a Device</strong>.</li>
+        <li>SSH into the gateway host and run the command above.</li>
+        <li>Scan the QR that appears in the terminal.</li>
+        <li>The session blob is saved to{' '}
+          <code className="page-mono">~/.openclaw/credentials/whatsapp/&lt;accountId&gt;/creds.json</code>.
+        </li>
+        <li>Restart the gateway. This card will show <strong>connected</strong> on the next status poll.</li>
+      </ol>
     </div>
   );
 }

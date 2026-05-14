@@ -46,6 +46,15 @@ function Authed({ onLogout, user }) {
     setPendingJoinKey(sessionKey);
     setView('chat');
   };
+
+  // When set, WorkspaceView will push a task frame on its nav stack so we
+  // deep-link straight to the TaskDetail panel. Used by ApprovalsView's
+  // row click — clicking an approval opens the task it's about.
+  const [pendingTask, setPendingTask] = useState(null);   // { id, title } | null
+  const openTask = (task) => {
+    setPendingTask(task);
+    setView('workspace');
+  };
   const { theme, cycleTheme } = useTheme();
 
   // agentId:  config.agentId,
@@ -91,8 +100,10 @@ function Authed({ onLogout, user }) {
         {view === 'skills'   && <SkillsView gateway={gateway} config={configBundle} />}
         {view === 'channels' && <ChannelsView gateway={gateway} />}
         {view === 'agents'   && <AgentsView gateway={gateway} config={configBundle} />}
-        {view === 'workspace'     && <WorkspaceView onOpenSession={openChatForSession} />}
-        {view === 'approvals'     && <ApprovalsView />}
+        {view === 'workspace'     && <WorkspaceView onOpenSession={openChatForSession}
+                                                    pendingTask={pendingTask}
+                                                    onPendingTaskHandled={() => setPendingTask(null)} />}
+        {view === 'approvals'     && <ApprovalsView onOpenTask={openTask} />}
         {view === 'tags'          && <TagsView />}
         {view === 'custom-fields' && <CustomFieldsView />}
         {view === 'activity'      && <ActivityView />}

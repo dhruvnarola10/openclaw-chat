@@ -13,12 +13,23 @@ import { ago } from '../../utils/format.js';
 import PageHeader from '../common/PageHeader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
 
-export default function WorkspaceView({ onOpenSession }) {
+export default function WorkspaceView({ onOpenSession, pendingTask, onPendingTaskHandled }) {
   // Stack of nav frames: [{type:'orgs'} | {type:'org', id, name} | ...]
   const [stack, setStack] = useState([{ type: 'orgs' }]);
   const view = stack[stack.length - 1];
   const push  = (frame)  => setStack((s) => [...s, frame]);
   const popTo = (index)  => setStack((s) => s.slice(0, index + 1));
+
+  // Deep-link: when App passes a pendingTask (e.g. from ApprovalsView), push
+  // a task frame and clear the signal so re-renders don't loop. We replace
+  // the current stack instead of appending so back-navigation goes to root
+  // rather than wherever the user was previously.
+  useEffect(() => {
+    if (!pendingTask?.id) return;
+    setStack([{ type: 'orgs' }, { type: 'task', id: pendingTask.id, title: pendingTask.title }]);
+    onPendingTaskHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTask?.id]);
 
   return (
     <div className="ov-view">
@@ -35,33 +46,49 @@ export default function WorkspaceView({ onOpenSession }) {
 // ── Approve / reject helpers (used in BoardDetail table + TaskDetail) ────
 //
 // Both flows go through the approvals API even when the user clicks a single
-// button — that way the audit trail and SSE stream stay consistent. We auto-
-// resolve the approval immediately and then patch the task status to mirror
-// the final outcome.
-async function approveTask(task, reason) {
-  const text = (reason ?? '').trim() || 'Approved by reviewer.';
-  const a = await api.post('/approvals', {
-    boardId:       task.boardId,
-    taskId:        task.id,
-    agentId:       task.assigneeAgentId ?? undefined,
-    actionType:    'task.complete',
-    leadReasoning: text,
-  });
-  await api.patch(`/approvals/${a.id}`, { status: 'approved', resolvedBy: 'reviewer' });
-  await api.patch(`/tasks/${task.id}`, { status: 'done' });
+// button — that way the audit trail and SSE stream stay consistent.
+//
+// IMPORTANT: there's almost always already a pending approval for this task
+// (the worker creates one when a task lands in `review`, and the GET /approvals
+// endpoint self-heals any missing ones). So we resolve the EXISTING approval
+// instead of creating a fresh one — otherwise the original row stays "pending"
+// in the Approvals page even after the user clicks Approve on the task.
+//
+// Fallback: if no pending approval exists (e.g. someone approved a `done`
+// task manually, or the board didn't require review), we create + resolve in
+// one shot. That keeps the audit trail consistent without forcing a workflow.
+async function resolveTaskApproval(task, decision, reason) {
+  const text = (reason ?? '').trim() || (decision === 'approved' ? 'Approved by reviewer.' : 'Rejected by reviewer.');
+
+  // Step 1 — find an existing pending approval pointing at this task.
+  let existingId = null;
+  try {
+    const list = await api.get('/approvals?status=pending');
+    const match = (list?.items ?? []).find((a) => a.taskId === task.id);
+    if (match) existingId = match.id;
+  } catch { /* fall through to create */ }
+
+  // Step 2 — resolve, or create-then-resolve if none was found.
+  if (existingId) {
+    await api.patch(`/approvals/${existingId}`, { status: decision, resolvedBy: 'reviewer' });
+  } else {
+    const a = await api.post('/approvals', {
+      boardId:       task.boardId,
+      taskId:        task.id,
+      agentId:       task.assigneeAgentId ?? undefined,
+      actionType:    'task.complete',
+      leadReasoning: text,
+    });
+    await api.patch(`/approvals/${a.id}`, { status: decision, resolvedBy: 'reviewer' });
+  }
+
+  // Step 3 — mirror the decision in the task status.
+  const nextStatus = decision === 'approved' ? 'done' : 'inbox';
+  await api.patch(`/tasks/${task.id}`, { status: nextStatus });
 }
-async function rejectTask(task, reason) {
-  const text = (reason ?? '').trim() || 'Rejected by reviewer.';
-  const a = await api.post('/approvals', {
-    boardId:       task.boardId,
-    taskId:        task.id,
-    agentId:       task.assigneeAgentId ?? undefined,
-    actionType:    'task.complete',
-    leadReasoning: text,
-  });
-  await api.patch(`/approvals/${a.id}`, { status: 'rejected', resolvedBy: 'reviewer' });
-  await api.patch(`/tasks/${task.id}`, { status: 'inbox' });
-}
+
+async function approveTask(task, reason) { return resolveTaskApproval(task, 'approved', reason); }
+async function rejectTask(task, reason)  { return resolveTaskApproval(task, 'rejected', reason); }
 
 // ── Breadcrumbs ─────────────────────────────────────────────────────────
 

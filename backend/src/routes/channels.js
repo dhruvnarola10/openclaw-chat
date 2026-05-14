@@ -32,7 +32,11 @@ import {
 
 const router = Router();
 
-const SUPPORTED_IDS = new Set(['telegram', 'discord', 'whatsapp']);
+// iMessage is included alongside the others. The UI in src/components/channels
+// surfaces all four; the backend has to accept all four too. iMessage falls
+// through to the local-JSON fallback for now (same as Discord / WhatsApp) —
+// no gateway-side write yet, but the saved values round-trip in the UI.
+const SUPPORTED_IDS = new Set(['telegram', 'discord', 'whatsapp', 'imessage']);
 
 const ChannelIdParam = z.string().refine((v) => SUPPORTED_IDS.has(v), {
   message: 'unsupported channel id',

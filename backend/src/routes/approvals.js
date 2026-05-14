@@ -65,7 +65,24 @@ router.get('/', async (req, res) => {
     .where(where)
     .orderBy(desc(approvals.createdAt))
     .limit(200);
-  res.json({ items: rows });
+
+  // Join in the task title in one round-trip. We do this server-side
+  // because the UI otherwise has no way to resolve taskId → title (there's
+  // no global GET /tasks). The lookup is a single SELECT keyed on the
+  // distinct taskIds present in this page.
+  const taskIds = [...new Set(rows.map((r) => r.taskId).filter(Boolean))];
+  let titleByTask = new Map();
+  if (taskIds.length) {
+    const taskRows = await db.select({ id: tasks.id, title: tasks.title })
+      .from(tasks).where(inArray(tasks.id, taskIds));
+    titleByTask = new Map(taskRows.map((t) => [t.id, t.title]));
+  }
+
+  const items = rows.map((r) => ({
+    ...r,
+    taskTitle: r.taskId ? (titleByTask.get(r.taskId) ?? null) : null,
+  }));
+  res.json({ items });
 });
 
 // Mission-control parity: lead_reasoning is REQUIRED — either supplied as
