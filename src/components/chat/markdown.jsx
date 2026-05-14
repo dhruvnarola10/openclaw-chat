@@ -49,14 +49,41 @@ export function CodeBlock({ language, children }) {
   );
 }
 
+// Why the split between `pre` and `code` is structured this way:
+//
+//   react-markdown emits a fenced code block as <pre><code class="language-X">…
+//   and inline code as <code>…</code> (inside a <p> or similar block parent).
+//
+//   We used to detect fenced blocks inside the `code` override and return a
+//   <CodeBlock> (a <div>) from there. During streaming the grammar
+//   oscillates between inline and block classifications for the same
+//   backticks — so react would briefly try to render a <div> inside the
+//   current paragraph. The browser silently auto-closes the <p> (illegal
+//   nesting), the real DOM diverges from React's virtual DOM, and the next
+//   render explodes with "removeChild: not a child of this node".
+//
+//   Doing the block-replacement in the `pre` slot keeps the <div>
+//   substitution at a block boundary where it's always valid.
 export const mdComponents = {
-  code({ className, children }) {
-    const m = /language-(\w+)/.exec(className || '');
-    return m
-      ? <CodeBlock language={m[1]}>{children}</CodeBlock>
-      : <code>{children}</code>;
+  // Inline code only — fenced blocks come through `pre` below.
+  code({ className, children, ...rest }) {
+    return <code className={className} {...rest}>{children}</code>;
   },
-  pre({ children }) { return <>{children}</>; },
+  // Replace the whole <pre><code …>…</code></pre> with our <CodeBlock>.
+  pre({ children }) {
+    // react-markdown 9 passes a single React element here; older variants
+    // may pass an array. Handle both defensively.
+    const child = Array.isArray(children) ? children[0] : children;
+    if (child && typeof child === 'object' && child.props) {
+      const m = /language-(\w+)/.exec(child.props.className ?? '');
+      return (
+        <CodeBlock language={m?.[1]}>
+          {child.props.children}
+        </CodeBlock>
+      );
+    }
+    return <pre>{children}</pre>;
+  },
   a({ href, children }) {
     return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
   },

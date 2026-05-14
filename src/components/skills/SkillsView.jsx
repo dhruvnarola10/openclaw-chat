@@ -10,8 +10,8 @@
 // optimistically reflects the new state. If every variant fails, the
 // switch reverts and an error toast appears.
 
-import { useCallback, useMemo, useState } from 'react';
-import { CheckCircle2, Search, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, Download, Loader2, Plus, Search, Sparkles, X } from 'lucide-react';
 import { useGatewayResource } from '../../hooks/useGatewayResource.js';
 import PageHeader from '../common/PageHeader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
@@ -131,6 +131,10 @@ export default function SkillsView({ gateway, config }) {
   const loading = skills.loading || tools.loading;
   const error   = (skills.error && tools.error) ? `${skills.error}; ${tools.error}` : '';
 
+  // ── Install-skill marketplace modal ──────────────────────────────────
+  const [installerOpen, setInstallerOpen] = useState(false);
+  const refreshAll = () => { skills.refresh(); tools.refresh(); };
+
   return (
     <div className="ov-view">
       <PageHeader
@@ -138,7 +142,15 @@ export default function SkillsView({ gateway, config }) {
         subtitle={`Capabilities and tools wired into ${config?.agentId || 'this'} agent.`}
         gatewayStatus={gateway.status}
         refreshing={loading}
-        onRefresh={() => { skills.refresh(); tools.refresh(); }}
+        onRefresh={refreshAll}
+        right={
+          <button className="ov-btn ov-btn--primary"
+            disabled={gateway.status !== 'on'}
+            onClick={() => setInstallerOpen(true)}
+            title={gateway.status === 'on' ? 'Install a new skill from ClawHub or a Git URL' : 'Connect first'}>
+            <Plus size={14} /> Install skill
+          </button>
+        }
       />
 
       <div className="ov-stat-row">
@@ -219,6 +231,226 @@ export default function SkillsView({ gateway, config }) {
               </div>
             ))}
       </section>
+
+      {installerOpen && (
+        <InstallSkillModal
+          gateway={gateway}
+          onClose={() => setInstallerOpen(false)}
+          onInstalled={() => { setInstallerOpen(false); refreshAll(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Install-skill marketplace modal ──────────────────────────────────────
+//
+// Two tabs:
+//   • ClawHub  — calls `skills.search`, lists results, install via
+//                `skills.install { source: 'clawhub', slug }`
+//   • From URL — direct git install via
+//                `skills.install { name, installId }` where installId is the
+//                git URL or whatever identifier the gateway recognises.
+function InstallSkillModal({ gateway, onClose, onInstalled }) {
+  const [tab, setTab] = useState('marketplace');   // 'marketplace' | 'direct'
+  // Marketplace state
+  const [query,    setQuery]    = useState('');
+  const [results,  setResults]  = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [searchErr, setSearchErr] = useState('');
+  const [installingSlug, setInstallingSlug] = useState(null);
+  // Direct-install state
+  const [directName, setDirectName] = useState('');
+  const [directId,   setDirectId]   = useState('');
+  const [directBusy, setDirectBusy] = useState(false);
+  const [error,      setError]      = useState('');
+
+  // ClawHub's skills.search returns an empty list when called with no query
+  // (it's a relevance-scored search, not a list-all endpoint). So we only
+  // run a search after the user has typed at least one character. Debounced
+  // 250ms to avoid hammering the registry on every keystroke.
+  const runSearch = useCallback(async (q) => {
+    if (!q || !q.trim()) {
+      setResults([]);
+      setSearchErr('');
+      setSearching(false);
+      return;
+    }
+    setSearching(true); setSearchErr('');
+    try {
+      const payload = await gateway.request('skills.search', { query: q.trim(), limit: 50 });
+      setResults(payload?.results ?? []);
+    } catch (e) {
+      setSearchErr(e.message);
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
+  }, [gateway]);
+
+  useEffect(() => {
+    if (tab !== 'marketplace') return;
+    const t = setTimeout(() => runSearch(query), 250);
+    return () => clearTimeout(t);
+  }, [query, tab, runSearch]);
+
+  const installFromClawHub = async (slug) => {
+    if (installingSlug) return;
+    setInstallingSlug(slug); setError('');
+    try {
+      await gateway.request('skills.install', { source: 'clawhub', slug });
+      onInstalled();
+    } catch (e) {
+      setError(`Install failed: ${e.message}`);
+    } finally {
+      setInstallingSlug(null);
+    }
+  };
+
+  const installDirect = async () => {
+    if (!directName.trim() || !directId.trim() || directBusy) return;
+    setDirectBusy(true); setError('');
+    try {
+      await gateway.request('skills.install', {
+        name:      directName.trim(),
+        installId: directId.trim(),
+      });
+      onInstalled();
+    } catch (e) {
+      setError(`Install failed: ${e.message}`);
+    } finally {
+      setDirectBusy(false);
+    }
+  };
+
+  return (
+    <div className="dialog-overlay" onClick={onClose}>
+      <div className="dialog dialog--lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14 }}>
+          <h3 style={{ margin: 0 }}>Install skill</h3>
+          <button className="row-action" onClick={onClose} title="Close"><X size={14} /></button>
+        </div>
+
+        <div className="agent-tabs" style={{ marginBottom: 14 }}>
+          <button type="button"
+            className={`agent-tab${tab === 'marketplace' ? ' agent-tab--active' : ''}`}
+            onClick={() => setTab('marketplace')}>
+            ClawHub marketplace
+          </button>
+          <button type="button"
+            className={`agent-tab${tab === 'direct' ? ' agent-tab--active' : ''}`}
+            onClick={() => setTab('direct')}>
+            From Git URL
+          </button>
+        </div>
+
+        {error && (
+          <div className="page-toast page-toast--error" style={{ marginBottom: 12 }}>{error}</div>
+        )}
+
+        {tab === 'marketplace' ? (
+          <>
+            <div className="page-search" style={{ marginBottom: 12 }}>
+              <Search size={14} />
+              <input className="ov-input"
+                placeholder="Search ClawHub (e.g. brave, github, calendar)…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                autoFocus />
+            </div>
+
+            {searching && !results.length && (
+              <p className="page-muted" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Loader2 size={14} className="spin" /> Searching…
+              </p>
+            )}
+            {searchErr && (
+              <p className="page-toast page-toast--error">{searchErr}</p>
+            )}
+            {!searching && !searchErr && !results.length && !query.trim() && (
+              // Empty-state when the user hasn't typed anything yet. ClawHub's
+              // search is relevance-scored, not a list-all — so we prompt the
+              // user instead of showing "0 results".
+              <div style={{ padding: '8px 4px' }}>
+                <p className="page-muted" style={{ marginBottom: 10 }}>
+                  Start typing to search ClawHub. Try one of these:
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {['github', 'brave', 'calendar', 'gmail', 'slack', 'notion', 'gemini', 'web-search']
+                    .map((s) => (
+                      <button key={s} type="button" className="ov-btn"
+                        style={{ padding: '4px 10px', fontSize: 12 }}
+                        onClick={() => setQuery(s)}>
+                        {s}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+            {!searching && !searchErr && !results.length && query.trim() && (
+              <p className="page-muted">No skills match "{query.trim()}".</p>
+            )}
+
+            {!!results.length && (
+              <ul className="ws-list" style={{ maxHeight: 360, overflowY: 'auto' }}>
+                {results.map((r) => (
+                  <li key={r.slug} className="ws-list-row" style={{ alignItems: 'center' }}>
+                    <div className="ws-list-main">
+                      <span className="page-strong">{r.displayName}</span>
+                      {r.summary && <span className="page-muted">{r.summary}</span>}
+                      <span className="page-muted" style={{ fontSize: 11.5 }}>
+                        <code className="page-mono">{r.slug}</code>
+                        {r.version && <> · v{r.version}</>}
+                      </span>
+                    </div>
+                    <button className="ov-btn ov-btn--primary"
+                      onClick={() => installFromClawHub(r.slug)}
+                      disabled={!!installingSlug}>
+                      {installingSlug === r.slug
+                        ? <><Loader2 size={13} className="spin" /> Installing…</>
+                        : <><Download size={13} /> Install</>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="page-muted" style={{ fontSize: 12.5, marginBottom: 14 }}>
+              Install a skill directly from a Git repo or any installId the gateway
+              recognises. Use this when the skill isn't published to ClawHub.
+            </p>
+            <div className="ov-field wide">
+              <label className="ov-label">Display name *</label>
+              <input className="ov-input"
+                placeholder="e.g. acme-internal-tools"
+                value={directName}
+                onChange={(e) => setDirectName(e.target.value)} />
+            </div>
+            <div className="ov-field wide" style={{ marginTop: 10 }}>
+              <label className="ov-label">Install ID (Git URL or local path) *</label>
+              <input className="ov-input"
+                placeholder="e.g. https://github.com/acme/openclaw-skill"
+                value={directId}
+                onChange={(e) => setDirectId(e.target.value)} />
+              <span className="page-muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+                The gateway clones / fetches this URL into its skills directory and
+                rebuilds. Make sure the repo follows the OpenClaw skill manifest format.
+              </span>
+            </div>
+            <div className="dialog-actions" style={{ marginTop: 16 }}>
+              <button className="dialog-cancel" onClick={onClose} disabled={directBusy}>
+                Cancel
+              </button>
+              <button className="dialog-confirm" onClick={installDirect}
+                disabled={!directName.trim() || !directId.trim() || directBusy}>
+                {directBusy ? 'Installing…' : 'Install'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

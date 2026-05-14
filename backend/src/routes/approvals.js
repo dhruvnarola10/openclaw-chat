@@ -6,14 +6,59 @@
 //   GET    /approvals/stream              — live SSE feed
 
 import { Router } from 'express';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, approvals, approvalTaskLinks, activityLog } from '../db/index.js';
+import { db, approvals, approvalTaskLinks, activityLog, tasks } from '../db/index.js';
 import { attachSse, publishSse } from '../sse/bus.js';
 
 const router = Router();
 
+// Idempotent self-heal: any task currently in `review` that has no pending
+// approval gets one inserted. This catches:
+//   • Tasks that finished before the worker started auto-creating approvals
+//   • Cases where the worker's INSERT failed (transient DB error, etc.)
+//   • Manual PATCH /tasks/:id { status: 'review' } actions that bypass the worker
+// Cheap because it only fires on the Approvals page load and the inner check
+// short-circuits when nothing is missing.
+async function backfillReviewApprovals() {
+  const reviewTasks = await db.select().from(tasks).where(eq(tasks.status, 'review'));
+  if (!reviewTasks.length) return 0;
+
+  const taskIds = reviewTasks.map((t) => t.id);
+  const existing = await db.select({ taskId: approvals.taskId })
+    .from(approvals)
+    .where(and(eq(approvals.status, 'pending'), inArray(approvals.taskId, taskIds)));
+  const haveApproval = new Set(existing.map((r) => r.taskId));
+
+  let created = 0;
+  for (const t of reviewTasks) {
+    if (haveApproval.has(t.id)) continue;
+    const reasoning = `Task "${t.title}" finished and is awaiting review.`;
+    const [row] = await db.insert(approvals).values({
+      boardId:       t.boardId,
+      taskId:        t.id,
+      agentId:       t.assigneeAgentId,
+      actionType:    'task.complete',
+      payload:       { reason: reasoning, transcriptPreview: (t.lastResult ?? '').slice(0, 500) },
+      leadReasoning: reasoning,
+      status:        'pending',
+    }).returning();
+    await db.insert(approvalTaskLinks).values({ approvalId: row.id, taskId: t.id });
+    await db.insert(activityLog).values({
+      type:    'approval.created',
+      payload: { id: row.id, taskIds: [t.id], agentId: t.assigneeAgentId, actionType: 'task.complete', autoCreated: true, backfilled: true },
+    });
+    publishSse('approvals', 'approval', { kind: 'created', approval: row, taskIds: [t.id] });
+    created += 1;
+  }
+  return created;
+}
+
 router.get('/', async (req, res) => {
+  // Self-heal first so the page shows them on this load, not the next one.
+  try { await backfillReviewApprovals(); }
+  catch (e) { console.warn('[approvals] backfill failed:', e.message); }
+
   const status = req.query.status;
   const where  = status ? eq(approvals.status, String(status)) : undefined;
   const rows = await db.select().from(approvals)
