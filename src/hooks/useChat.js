@@ -19,6 +19,26 @@ import { postResponses, readSseStream } from '../api/http.js';
 import { buildInputContent } from '../utils/files.js';
 import { genId } from '../utils/format.js';
 
+// Tool results arrive in several shapes (string, { text }, array of
+// { text }, arbitrary object). Coerce to a displayable string the same
+// way OpenClaw's own webchat does.
+function toToolText(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) {
+    return v.map((b) => (typeof b === 'string' ? b : b?.text ?? '')).filter(Boolean).join('\n');
+  }
+  if (typeof v === 'object') {
+    if (typeof v.text === 'string') return v.text;
+    if (typeof v.content === 'string') return v.content;
+    if (Array.isArray(v.content)) {
+      return v.content.map((b) => (typeof b === 'string' ? b : b?.text ?? '')).filter(Boolean).join('\n');
+    }
+    try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+  }
+  return String(v);
+}
+
 export function useChat({ apiUrl, token, agentId, model, stream, gateway, threadOps }) {
   const [loading, setLoading] = useState(false);
   const abortRef     = useRef(null);  // for HTTP path
@@ -132,6 +152,36 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
     // Lock onto the first runId we see so we ignore unrelated runs.
     if (runId == null) runId = payload.runId;
     if (payload.runId !== runId) return;
+
+    // ── Tool-stream events (protocol v4) ──────────────────────────────
+    // Shape: { stream:"tool", runId, sessionKey, ts,
+    //          data:{ toolCallId, name, phase, args, partialResult, result } }
+    // phase: "start" (args) → "update" (partialResult) → "result" (result).
+    // We keep a card per toolCallId on the message so Message.jsx can
+    // render the call + output blocks BEFORE the assistant text.
+    if (payload.stream === 'tool') {
+      const d = payload.data ?? {};
+      const id = d.toolCallId || `${d.name}:tool`;
+      threadOps.patchLast(threadId, (m) => {
+        const cards = Array.isArray(m.toolCalls) ? m.toolCalls.slice() : [];
+        let card = cards.find((c) => c.id === id);
+        if (!card) {
+          card = { id, name: d.name || 'tool', args: undefined, output: '', status: 'running' };
+          cards.push(card);
+        }
+        if (d.phase === 'start') {
+          card.args   = d.args ?? card.args;
+          card.status = 'running';
+        } else if (d.phase === 'update') {
+          if (d.partialResult != null) card.output = toToolText(d.partialResult);
+        } else if (d.phase === 'result') {
+          card.output = toToolText(d.result ?? d.partialResult ?? card.output);
+          card.status = d.isError ? 'error' : 'done';
+        }
+        return { ...m, toolCalls: cards, waiting: false };
+      });
+      return;
+    }
 
     // Protocol v4 streams text as `payload.deltaText` (incremental;
     // `replace:true` resets the running text). Older v3 gateways only sent

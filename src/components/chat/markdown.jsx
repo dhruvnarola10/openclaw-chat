@@ -1,10 +1,23 @@
-// Shared markdown renderer plumbing — used by both the assistant bubble
-// and the system/command bubble.
+// Shared markdown renderer plumbing — used by the assistant bubble, the
+// system/command bubble, and the workspace task transcript.
 
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+// Single source of truth for the remark plugin list so every render site
+// behaves identically.
+//   • remarkGfm    — tables, strikethrough, autolinks, task lists.
+//   • remarkBreaks — render a single "\n" as a hard line break. CommonMark
+//                     collapses single newlines into spaces, which mangled
+//                     CLI-style command output (e.g. `/model`, `/status`)
+//                     into one run-on line. Chat + terminal output is
+//                     line-oriented, so this is the correct behaviour for
+//                     ALL response types here.
+export const mdRemarkPlugins = [remarkGfm, remarkBreaks];
 
 export function CopyBtn({ text }) {
   const [done, setDone] = useState(false);

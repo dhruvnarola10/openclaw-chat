@@ -6,8 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronRight, MessageSquare, Pencil, Plus, Send, Trash2, X as XIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { mdComponents } from '../chat/markdown.jsx';
+import { mdComponents, mdRemarkPlugins } from '../chat/markdown.jsx';
 import { api, useApi, openSse } from '../../hooks/useApi.js';
 import { ago } from '../../utils/format.js';
 import PageHeader from '../common/PageHeader.jsx';
@@ -872,7 +871,7 @@ function TaskDetail({ task: hint, onOpenSession }) {
         <div className="ov-card-head"><h2>Transcript</h2></div>
         {liveTranscript ? (
           <div className="ws-transcript-md">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            <ReactMarkdown remarkPlugins={mdRemarkPlugins} components={mdComponents}>
               {liveTranscript}
             </ReactMarkdown>
             {liveStatus === 'running' && <span className="cursor" />}

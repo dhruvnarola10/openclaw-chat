@@ -1,18 +1,27 @@
-// Filters the static slash-command catalog by the current input text and
-// owns the popup highlight + keyboard navigation index.
+// Filters a slash-command catalog by the current input text and owns the
+// popup highlight + keyboard navigation index. The catalog is injected
+// (live from the gateway via useGatewayCommands) and falls back to the
+// static bundle so this still works standalone.
 
 import { useCallback, useMemo, useState } from 'react';
 import { SLASH_COMMANDS } from '../utils/slashCommands.js';
 
-export function useSlashCommands({ input }) {
+export function useSlashCommands({ input, commands = SLASH_COMMANDS }) {
   const [idx, setIdx] = useState(0);
   const [dismissed, setDismissed] = useState(false);
 
   const results = useMemo(() => {
     if (!input.startsWith('/') || input.includes(' ')) return [];
     const q = input.slice(1).toLowerCase();
-    return SLASH_COMMANDS.filter((c) => c.cmd.slice(1).startsWith(q));
-  }, [input]);
+    const list = Array.isArray(commands) && commands.length ? commands : SLASH_COMMANDS;
+    // Match the typed prefix against the command and any text aliases so
+    // "/m" surfaces "/model" when the gateway reports it as an alias.
+    return list.filter((c) => {
+      if (c.cmd.slice(1).toLowerCase().startsWith(q)) return true;
+      return Array.isArray(c.aliases)
+        && c.aliases.some((a) => String(a).replace(/^\/+/, '').toLowerCase().startsWith(q));
+    });
+  }, [input, commands]);
 
   const open = !dismissed && results.length > 0;
 

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChat }           from '../hooks/useChat.js';
 import { useRealtimeTalk }   from '../hooks/useRealtimeTalk.js';
 import { useSlashCommands }  from '../hooks/useSlashCommands.js';
+import { useGatewayCommands } from '../hooks/useGatewayCommands.js';
 import { useTalk }           from '../hooks/useTalk.js';
 import { useVoice }          from '../hooks/useVoice.js';
 import ChatHeader            from '../components/chat/ChatHeader.jsx';
@@ -22,7 +23,12 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
   const [deletingId,   setDeletingId]   = useState(null);
   const [input,        setInput]        = useState('');
 
-  const slash = useSlashCommands({ input });
+  // Live slash-command catalog from the gateway (falls back to static).
+  const { commands: slashCatalog } = useGatewayCommands({
+    gateway,
+    agentId: config.agentId,
+  });
+  const slash = useSlashCommands({ input, commands: slashCatalog });
 
   // chat must be defined before voice so the onTranscript callback can call chat.send
   const chat = useChat({

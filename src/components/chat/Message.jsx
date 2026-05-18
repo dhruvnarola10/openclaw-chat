@@ -6,10 +6,9 @@
 //   – Error             → red-tinted assistant bubble
 
 import { useCallback, useState } from 'react';
-import { Bot, Brain, ChevronDown, ChevronRight, Terminal } from 'lucide-react';
+import { Bot, Brain, ChevronDown, ChevronRight, Loader2, Terminal, Wrench, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { mdComponents } from './markdown.jsx';
+import { mdComponents, mdRemarkPlugins } from './markdown.jsx';
 import MessageAttachments from './MessageAttachments.jsx';
 
 // Some models emit XML-ish control tags inline with the user-facing content.
@@ -101,7 +100,7 @@ export default function Message({ msg, expanded, setExpanded }) {
           {msg.waiting && !msg.content && <ThinkingDots compact />}
           {cleaned && (
             <>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              <ReactMarkdown remarkPlugins={mdRemarkPlugins} components={mdComponents}>
                 {cleaned}
               </ReactMarkdown>
               {msg.streaming && <span className="cursor" />}
@@ -129,13 +128,20 @@ export default function Message({ msg, expanded, setExpanded }) {
             onToggle={toggle}
           />
         )}
-        {msg.waiting && !cleaned && <ThinkingDots />}
+        {/* Tool calls render BEFORE the assistant text — they're the work
+            the agent did to produce the answer. */}
+        {Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0 && (
+          <div className="tool-calls">
+            {msg.toolCalls.map((tc) => <ToolCallBlock key={tc.id} call={tc} />)}
+          </div>
+        )}
+        {msg.waiting && !cleaned && (msg.toolCalls?.length ? null : <ThinkingDots />)}
         {cleaned && (
           <div className={`asst-msg${msg.isError ? ' error-msg' : ''}`}>
             {msg.isError
               ? <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{cleaned}</pre>
               : (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                <ReactMarkdown remarkPlugins={mdRemarkPlugins} components={mdComponents}>
                   {cleaned}
                 </ReactMarkdown>
               )
@@ -236,6 +242,60 @@ function compact(n) {
 }
 
 // ── Inline pieces ─────────────────────────────────────────────────────
+
+// Turn a raw tool id like "alterestate__alterestate_list_properties" into
+// a human header "Alterestate Alterestate List Properties" (mirrors how
+// OpenClaw's webchat humanizes tool names).
+function humanizeToolName(name) {
+  return String(name || 'tool')
+    .replace(/__/g, ' ')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// One collapsible tool card: header (name + status), expandable body with
+// the tool input (args) and tool output. Collapsed by default to keep the
+// transcript scannable — matches the screenshots' UX.
+function ToolCallBlock({ call }) {
+  const [open, setOpen] = useState(false);
+  const argsText = call.args == null
+    ? ''
+    : (typeof call.args === 'string' ? call.args : safeJson(call.args));
+
+  return (
+    <div className={`tool-card tool-card--${call.status}`}>
+      <button className="tool-card-head" onClick={() => setOpen((v) => !v)}>
+        <Wrench size={13} className="tool-card-icon" />
+        <span className="tool-card-name">{humanizeToolName(call.name)}</span>
+        <span className="tool-card-spacer" />
+        {call.status === 'running' && <Loader2 size={13} className="spin" />}
+        {call.status === 'error'   && <X size={13} style={{ color: '#f87171' }} />}
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+      {open && (
+        <div className="tool-card-body">
+          {argsText && (
+            <div className="tool-card-section">
+              <div className="tool-card-label">Tool input</div>
+              <pre className="tool-card-pre">{argsText}</pre>
+            </div>
+          )}
+          <div className="tool-card-section">
+            <div className="tool-card-label">Tool output</div>
+            <pre className="tool-card-pre">
+              {call.output || (call.status === 'running' ? '…' : '(no output)')}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function safeJson(v) {
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
 
 function ThinkingBlock({ content, streaming, expanded, onToggle }) {
   return (

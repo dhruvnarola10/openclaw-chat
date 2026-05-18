@@ -245,6 +245,19 @@ export class Gateway {
       return;
     }
 
+    // 7b. Tool-stream events (protocol v4). Tool calls/results do NOT ride
+    // inside the `chat` event — they arrive on a separate `agent` /
+    // `session.tool` event with `payload.stream === "tool"`, keyed by the
+    // same sessionKey. Funnel them through the same per-session fan-out so
+    // useChat can attach tool cards to the in-flight message.
+    if (msg.type === 'event'
+        && (msg.event === 'agent' || msg.event === 'session.tool')
+        && msg.payload?.stream === 'tool'
+        && msg.payload.sessionKey) {
+      this.onChat(msg.payload);
+      return;
+    }
+
     // 8. Server events — refresh sessions on any event after auth.
     if (msg.type === 'event') {
       this.onEvent(msg);
