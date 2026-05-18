@@ -11,8 +11,12 @@
 
 import { genId } from '../utils/format.js';
 
+// OpenClaw bumped the wire protocol to v4 (MIN_CLIENT_PROTOCOL_VERSION = 4);
+// v3 was dropped so a v3-only client is closed with 1002 "protocol mismatch".
+// Advertise a 3–4 range — the gateway negotiates the highest mutually
+// supported version, so this works against both old and updated gateways.
 const PROTO_MIN = 3;
-const PROTO_MAX = 3;
+const PROTO_MAX = 4;
 const PING_INTERVAL_MS = 20_000;
 const RECONNECT_DELAY_MS = 5_000;
 const AUTH_FALLBACK_MS = 3_000;

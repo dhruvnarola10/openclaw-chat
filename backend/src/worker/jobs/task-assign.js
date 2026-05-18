@@ -83,13 +83,25 @@ export async function runTaskAssign({ taskId, gateway }) {
     if (chatRunId == null) chatRunId = payload.runId;
     if (payload.runId !== chatRunId) return;
 
-    const text = payload.message?.content?.[0]?.text ?? '';
+    // Protocol v4 ("require v4 chat deltas") delivers the streamed text as
+    // `payload.deltaText` (incremental; `replace:true` resets the buffer).
+    // The cumulative `message.content[0].text` is still emitted by current
+    // builds but is no longer contractually guaranteed, so prefer deltaText
+    // and fall back to the cumulative field for older (v3) gateways.
+    const deltaText  = payload.deltaText;
+    const cumulative = payload.message?.content?.[0]?.text;
 
     if (payload.state === 'delta') {
-      buffer = text;
-      publishSse(`task:${taskId}`, 'delta', { taskId, runId: run.id, text });
+      if (typeof deltaText === 'string') {
+        buffer = payload.replace ? deltaText : buffer + deltaText;
+      } else if (typeof cumulative === 'string') {
+        buffer = cumulative;                 // legacy v3 cumulative shape
+      }
+      publishSse(`task:${taskId}`, 'delta', { taskId, runId: run.id, text: buffer });
     } else if (payload.state === 'final') {
-      buffer = text || buffer;
+      // Final may carry the complete text (cumulative) — prefer it if
+      // present, otherwise keep the deltas we accumulated.
+      buffer = (typeof cumulative === 'string' && cumulative) ? cumulative : buffer;
       resolved = true;
       resolveDone({ stopReason: payload.stopReason ?? 'completed' });
     } else if (payload.state === 'aborted') {

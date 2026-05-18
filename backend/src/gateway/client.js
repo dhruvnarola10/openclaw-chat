@@ -6,8 +6,13 @@
 import WebSocket from 'ws';
 import { randomUUID } from 'crypto';
 
+// OpenClaw bumped the wire protocol to v4 (commit 150bebcd0ce7,
+// "require v4 chat deltas"); MIN_CLIENT_PROTOCOL_VERSION is now 4 and v3 was
+// dropped, so a v3-only client gets close code 1002 "protocol mismatch".
+// We advertise a 3–4 range so this connects to both old and new gateways:
+// the server negotiates `maxProtocol >= N && minProtocol <= N`.
 const PROTO_MIN = 3;
-const PROTO_MAX = 3;
+const PROTO_MAX = 4;
 
 export class GatewayClient {
   constructor({ url, token, onChat, onEvent, onStatus }) {

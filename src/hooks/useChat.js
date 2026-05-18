@@ -133,19 +133,27 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
     if (runId == null) runId = payload.runId;
     if (payload.runId !== runId) return;
 
-    const text = payload.message?.content?.[0]?.text ?? '';
+    // Protocol v4 streams text as `payload.deltaText` (incremental;
+    // `replace:true` resets the running text). Older v3 gateways only sent
+    // the cumulative `message.content[0].text`. Handle both: prefer the
+    // incremental delta, fall back to cumulative.
+    const deltaText  = payload.deltaText;
+    const cumulative = payload.message?.content?.[0]?.text;
 
     if (payload.state === 'delta') {
-      threadOps.patchLast(threadId, (m) => ({
-        ...m,
-        content: text,                 // cumulative — replace, not append
-        waiting: false,
-        thinkingStreaming: false,
-      }));
+      threadOps.patchLast(threadId, (m) => {
+        let content;
+        if (typeof deltaText === 'string') {
+          content = payload.replace ? deltaText : (m.content || '') + deltaText;
+        } else {
+          content = cumulative ?? m.content;   // legacy v3 cumulative shape
+        }
+        return { ...m, content, waiting: false, thinkingStreaming: false };
+      });
     } else if (payload.state === 'final') {
       threadOps.patchLast(threadId, (m) => ({
         ...m,
-        content: text || m.content,
+        content: (typeof cumulative === 'string' && cumulative) ? cumulative : m.content,
         streaming: false,
         thinkingStreaming: false,
         waiting: false,
