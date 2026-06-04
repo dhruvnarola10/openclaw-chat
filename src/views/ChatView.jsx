@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChat }           from '../hooks/useChat.js';
+import { useAsyncReplies }   from '../hooks/useAsyncReplies.js';
 import { useRealtimeTalk }   from '../hooks/useRealtimeTalk.js';
 import { useSlashCommands }  from '../hooks/useSlashCommands.js';
 import { useGatewayCommands } from '../hooks/useGatewayCommands.js';
@@ -39,6 +40,21 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
     stream:  config.stream,
     gateway,
     threadOps,
+  });
+
+  // Tracked-ref signal for the async-reply listener: while loading=true,
+  // it should defer to useChat for that runId. After the active send
+  // finalises, any *new* runId on the same sessionKey is an async wake
+  // (image_generate finishing, follow-up task result, etc).
+  const isSendingRef = useRef(false);
+  isSendingRef.current = chat.loading;
+
+  useAsyncReplies({
+    gateway,
+    sessionKey: threadOps.activeThread?.sessionKey ?? null,
+    threadId:   threadOps.activeId ?? null,
+    threadOps,
+    isSendingRef,
   });
 
   // ── Voice ───────────────────────────────────────────────────────────────

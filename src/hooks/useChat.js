@@ -16,12 +16,22 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { postResponses, readSseStream } from '../api/http.js';
-import { buildInputContent } from '../utils/files.js';
+import { attachmentsFromMessageToolArgs, buildInputContent, extractAttachmentsFromContent, extractMediaTokens } from '../utils/files.js';
 import { genId } from '../utils/format.js';
 
 // Tool results arrive in several shapes (string, { text }, array of
 // { text }, arbitrary object). Coerce to a displayable string the same
 // way OpenClaw's own webchat does.
+// Dedupe inbound attachments by id, preferring the freshest (later) copy —
+// streaming events may re-deliver the same image as the message grows.
+function mergeAttachments(existing, incoming) {
+  if (!incoming?.length) return existing;
+  const byId = new Map();
+  for (const a of existing ?? []) byId.set(a.id, a);
+  for (const a of incoming)      byId.set(a.id, a);
+  return Array.from(byId.values());
+}
+
 function toToolText(v) {
   if (v == null) return '';
   if (typeof v === 'string') return v;
@@ -162,7 +172,31 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
     if (payload.stream === 'tool') {
       const d = payload.data ?? {};
       const id = d.toolCallId || `${d.name}:tool`;
+      // The `message` tool IS the visible reply — its args carry the text
+      // and attachments the user should see. Don't render a redundant card;
+      // hoist its content onto the message instead and finalize on result.
+      // Match by name OR by argument shape — different gateway builds emit
+      // it under slightly different names (message, message.send, etc).
+      const args = d.args ?? {};
+      const isMessageTool =
+        d.name === 'message' || d.name === 'message.send' ||
+        (args && typeof args === 'object' && args.action === 'send' &&
+         (typeof args.message === 'string' || Array.isArray(args.attachments)));
+
       threadOps.patchLast(threadId, (m) => {
+        if (isMessageTool) {
+          const text = typeof args.message === 'string' ? args.message : m.content;
+          const atts = attachmentsFromMessageToolArgs(args);
+          const isFinal = d.phase === 'result';
+          return {
+            ...m,
+            content:           text,
+            attachments:       mergeAttachments(m.attachments, atts),
+            waiting:           false,
+            streaming:         isFinal ? false : m.streaming,
+            thinkingStreaming: false,
+          };
+        }
         const cards = Array.isArray(m.toolCalls) ? m.toolCalls.slice() : [];
         let card = cards.find((c) => c.id === id);
         if (!card) {
@@ -190,6 +224,11 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
     const deltaText  = payload.deltaText;
     const cumulative = payload.message?.content?.[0]?.text;
 
+    // Non-text content parts (images, files) can ride alongside the text in
+    // `payload.message.content[]`. Pull them out once per event and let the
+    // patchers merge them in.
+    const inboundAtts = extractAttachmentsFromContent(payload.message?.content);
+
     if (payload.state === 'delta') {
       threadOps.patchLast(threadId, (m) => {
         let content;
@@ -198,19 +237,33 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
         } else {
           content = cumulative ?? m.content;   // legacy v3 cumulative shape
         }
-        return { ...m, content, waiting: false, thinkingStreaming: false };
+        // Strip MEDIA:<path> tokens out of the running text and surface
+        // them as attachments (image_generate etc. write paths into text).
+        const m1 = extractMediaTokens(content);
+        return {
+          ...m,
+          content: m1.cleanedText,
+          waiting: false,
+          thinkingStreaming: false,
+          attachments: mergeAttachments(m.attachments, [...inboundAtts, ...m1.attachments]),
+        };
       });
     } else if (payload.state === 'final') {
-      threadOps.patchLast(threadId, (m) => ({
-        ...m,
-        content: (typeof cumulative === 'string' && cumulative) ? cumulative : m.content,
-        streaming: false,
-        thinkingStreaming: false,
-        waiting: false,
-        usage: payload.usage ?? m.usage,
-        model: resolvedModel ?? payload.model ?? m.model,
-        stopReason: payload.stopReason ?? m.stopReason,
-      }));
+      threadOps.patchLast(threadId, (m) => {
+        const rawContent = (typeof cumulative === 'string' && cumulative) ? cumulative : m.content;
+        const m1 = extractMediaTokens(rawContent);
+        return {
+          ...m,
+          content: m1.cleanedText,
+          streaming: false,
+          thinkingStreaming: false,
+          waiting: false,
+          usage: payload.usage ?? m.usage,
+          model: resolvedModel ?? payload.model ?? m.model,
+          stopReason: payload.stopReason ?? m.stopReason,
+          attachments: mergeAttachments(m.attachments, [...inboundAtts, ...m1.attachments]),
+        };
+      });
       // The chat event's `usage` field is often empty — the official
       // dashboard pulls token counts from sessions.usage.timeseries
       // separately. Mirror that here so the meta row populates.

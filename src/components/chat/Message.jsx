@@ -135,6 +135,8 @@ export default function Message({ msg, expanded, setExpanded }) {
             {msg.toolCalls.map((tc) => <ToolCallBlock key={tc.id} call={tc} />)}
           </div>
         )}
+        {/* Files / images returned alongside the assistant text. */}
+        <MessageAttachments attachments={msg.attachments} />
         {msg.waiting && !cleaned && (msg.toolCalls?.length ? null : <ThinkingDots />)}
         {cleaned && (
           <div className={`asst-msg${msg.isError ? ' error-msg' : ''}`}>

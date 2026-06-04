@@ -112,6 +112,39 @@ export function useThreads({ agentId }) {
     return { threadId: resolvedThreadId, sessionKey: resolvedSessionKey, asstId };
   }, [activeId, agentId]);
 
+  /**
+   * Append a fresh assistant message to `threadId`. Used by the async-reply
+   * listener when the gateway pushes a new runId on the session (e.g. an
+   * image_generate task finished after the original turn ended). Returns
+   * the new message's id so the caller can stream into it via patchMessage.
+   */
+  const appendAssistantMessage = useCallback((threadId, initial) => {
+    const id = genId();
+    setThreads((prev) => prev.map((t) => {
+      if (t.id !== threadId) return t;
+      const msg = {
+        id, role: 'assistant', content: '', thinking: '',
+        streaming: true, thinkingStreaming: false, waiting: true,
+        isError: false, isAsync: true,
+        ...initial,
+      };
+      return { ...t, updatedAt: Date.now(), messages: [...t.messages, msg] };
+    }));
+    return id;
+  }, []);
+
+  /** Apply a transform to a specific message in `threadId`, identified by msgId. */
+  const patchMessage = useCallback((threadId, msgId, transform) => {
+    setThreads((prev) => prev.map((t) => {
+      if (t.id !== threadId) return t;
+      const idx = t.messages.findIndex((m) => m.id === msgId);
+      if (idx < 0) return t;
+      const next = t.messages.slice();
+      next[idx] = transform(next[idx]);
+      return { ...t, updatedAt: Date.now(), messages: next };
+    }));
+  }, []);
+
   /** Apply a transform to the last assistant message of `threadId`. */
   const patchLast = useCallback((threadId, transform) => {
     setThreads((prev) => prev.map((t) => {
@@ -156,6 +189,6 @@ export function useThreads({ agentId }) {
   return {
     threads, activeId, activeThread,
     newThread, switchThread, deleteThread, renameThread,
-    setMessages, startTurn, patchLast, ensureThreadForSession, clearAll,
+    setMessages, startTurn, patchLast, patchMessage, appendAssistantMessage, ensureThreadForSession, clearAll,
   };
 }

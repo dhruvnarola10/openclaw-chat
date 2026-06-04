@@ -106,6 +106,202 @@ export function buildInputContent(text, attachments) {
   return [{ type: 'message', role: 'user', content }];
 }
 
+// ── Inbound attachment parsing ──────────────────────────────────────────
+//
+// Assistant replies arrive as `payload.message.content[]`. The agent /
+// gateway may emit images and files in several shapes (Anthropic-style,
+// OpenAI-style, OpenClaw file refs). Normalise them to the same shape
+// MessageAttachments already understands.
+//
+//   { id, name, type, url, dataUrl?, unavailable?, error? }
+//
+// Anything we can't resolve to a viewable url/dataUrl becomes an
+// `unavailable` chip with the filename — matches OpenClaw's
+// "File not found / Unavailable" UX.
+
+const IMAGE_MIME_PREFIX = 'image/';
+
+function mimeFromName(name) {
+  const ext = String(name || '').split('.').pop()?.toLowerCase();
+  if (!ext) return 'application/octet-stream';
+  if (['jpg', 'jpeg'].includes(ext)) return 'image/jpeg';
+  if (['png','gif','webp','heic','heif'].includes(ext)) return `image/${ext}`;
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'json') return 'application/json';
+  if (ext === 'csv') return 'text/csv';
+  if (['txt','md','html'].includes(ext)) return `text/${ext === 'md' ? 'markdown' : ext}`;
+  return 'application/octet-stream';
+}
+
+function dataUrlFromSource(src) {
+  if (!src || typeof src !== 'object') return null;
+  if (src.type === 'base64' && src.data) {
+    const media = src.media_type || src.mediaType || 'application/octet-stream';
+    return `data:${media};base64,${src.data}`;
+  }
+  if (typeof src.url === 'string') return src.url;
+  return null;
+}
+
+function partToAttachment(part, i) {
+  if (!part || typeof part !== 'object') return null;
+  const baseId = part.id || part.file_id || part.fileId || `att-${i}`;
+
+  // Anthropic-style { type:'image', source:{type:'base64',media_type,data} | {type:'url',url} }
+  // AND OpenClaw message-tool style { type:'image', path, mimeType, name } —
+  // same `type:'image'` but different field set.
+  if (part.type === 'image') {
+    const fromSource = part.source ? dataUrlFromSource(part.source) : null;
+    const path       = part.path || part.file_path || part.fileSource;
+    const media      = part.source?.media_type || part.source?.mediaType || part.mimeType || part.media_type || 'image/png';
+    const name       = part.name || (typeof path === 'string' ? path.split('/').pop() : null) || `image-${i}.${media.split('/')[1] || 'png'}`;
+    if (fromSource) {
+      return { id: baseId, name, type: media, url: fromSource, dataUrl: fromSource.startsWith('data:') ? fromSource : undefined };
+    }
+    if (typeof path === 'string' && path.length) {
+      // http(s) → render directly. Anything else (absolute fs path, MEDIA: ref) → assistant-media route.
+      return /^https?:/i.test(path)
+        ? { id: baseId, name, type: media, url: path }
+        : { id: baseId, name, type: media, mediaSource: path };
+    }
+    return { id: baseId, name, type: media, unavailable: true };
+  }
+
+  // OpenAI: { type:'image_url', image_url:{url} } or { type:'output_image', image_url:{url} }
+  if ((part.type === 'image_url' || part.type === 'output_image') && part.image_url) {
+    const url  = typeof part.image_url === 'string' ? part.image_url : part.image_url.url;
+    const name = part.image_url?.name || part.name || `image-${i}.png`;
+    return url
+      ? { id: baseId, name, type: 'image/*', url }
+      : { id: baseId, name, type: 'image/*', unavailable: true };
+  }
+
+  // OpenClaw / generic file refs: { type:'file' | 'attachment', fileId, name, url?, mediaType? }
+  if (part.type === 'file' || part.type === 'attachment' || part.type === 'input_file' || part.type === 'output_file') {
+    const url  = part.url || dataUrlFromSource(part.source);
+    const name = part.name || part.filename || part.file_name || baseId;
+    const type = part.mediaType || part.media_type || part.source?.media_type || mimeFromName(name);
+    return url
+      ? { id: baseId, name, type, url, dataUrl: url.startsWith('data:') ? url : undefined }
+      : { id: baseId, name, type, unavailable: true };
+  }
+
+  return null;
+}
+
+/**
+ * Walk `payload.message.content[]` (or any equivalent array) and pull out
+ * a list of inbound attachments. Returns [] when there are none.
+ */
+export function extractAttachmentsFromContent(content) {
+  if (!Array.isArray(content)) return [];
+  const out = [];
+  for (let i = 0; i < content.length; i++) {
+    const a = partToAttachment(content[i], i);
+    if (a) out.push(a);
+  }
+  return out;
+}
+
+// ── Inline MEDIA: tokens from assistant text ────────────────────────────
+//
+// OpenClaw's `image_generate` (and other media-producing tools) emit the
+// path of the generated file straight into the assistant text as
+// `MEDIA:<path>`. The Control UI parses these out and fetches each via
+// /__openclaw__/assistant-media. We do the same:
+//
+//   in:  "Here's the image: MEDIA:/home/.../foo.jpg"
+//   out: { cleanedText: "Here's the image:", attachments: [{ mediaSource, ... }] }
+//
+// The regex tolerates the path going to end-of-line OR up to whitespace —
+// some agents wrap MEDIA: in code fences, others leave it bare.
+const MEDIA_TOKEN_RE = /MEDIA:(\S+)/g;
+
+export function extractMediaTokens(text) {
+  if (typeof text !== 'string' || !text.includes('MEDIA:')) {
+    return { cleanedText: text, attachments: [] };
+  }
+  const attachments = [];
+  const seen = new Set();
+  const cleanedText = text.replace(MEDIA_TOKEN_RE, (_, rawPath) => {
+    const path = rawPath.replace(/[.,;:)]+$/, '');   // trim trailing punctuation
+    if (seen.has(path)) return '';
+    seen.add(path);
+    const name = path.split('/').pop() || 'media';
+    attachments.push({
+      id:          `media:${path}`,
+      name,
+      type:        mimeFromName(name),
+      mediaSource: path,
+    });
+    return '';
+  }).replace(/\n{3,}/g, '\n\n').trim();
+  return { cleanedText, attachments };
+}
+
+// OpenClaw's completion agent delivers the visible reply by calling the
+// `message` tool with shape:
+//
+//   { action: "send",
+//     message: "Here is the image you requested:",
+//     attachments: [{ type:"image", mimeType, name, path }] }
+//
+// The gateway then routes that to the channel and the original sessionKey
+// sees a "Sent visible reply…" tool-output, but no follow-up chat delta
+// with a MEDIA: token. So if we only look at chat text, the image
+// disappears. The built-in dashboard reads the args directly — match it.
+export function attachmentsFromMessageToolArgs(args) {
+  if (!args || typeof args !== 'object') return [];
+  const list = Array.isArray(args.attachments) ? args.attachments : [];
+  const out = [];
+  // OpenClaw's message tool accepts the media reference under any of these
+  // keys (src/agents/tools/message-tool.ts → readStructuredAttachmentMediaParams).
+  // `media` is the canonical one — different models populate different aliases.
+  const MEDIA_KEYS = ['media', 'mediaUrl', 'path', 'filePath', 'fileUrl', 'url'];
+  for (let i = 0; i < list.length; i++) {
+    const raw = list[i] ?? {};
+    let ref = null;
+    for (const k of MEDIA_KEYS) {
+      const v = raw[k];
+      if (typeof v === 'string' && v.length) { ref = v; break; }
+    }
+    // Also accept a top-level buffer (base64 data URL) when the agent
+    // inlines bytes instead of referencing a file path.
+    const inline = typeof raw.buffer === 'string' && raw.buffer.length ? raw.buffer : null;
+
+    const name = raw.name || raw.filename
+      || (typeof ref === 'string' ? ref.split('/').pop() : null)
+      || `attachment-${i}`;
+    const type = raw.mimeType || raw.contentType || raw.media_type || raw.mediaType
+      || (raw.type === 'image' ? mimeFromName(name) : null)
+      || mimeFromName(name);
+
+    if (inline) {
+      const dataUrl = inline.startsWith('data:') ? inline : `data:${type};base64,${inline}`;
+      out.push({ id: `msgtool:${name}:${i}`, name, type, url: dataUrl, dataUrl });
+      continue;
+    }
+    if (!ref) {
+      out.push({ id: `msgtool:${name}:${i}`, name, type, unavailable: true });
+      continue;
+    }
+    out.push({
+      id:   `msgtool:${ref}`,
+      name,
+      type,
+      // Absolute fs paths and MEDIA: refs go through the assistant-media
+      // route. http(s) URLs are used as-is.
+      ...(/^https?:/i.test(ref) ? { url: ref } : { mediaSource: ref }),
+    });
+  }
+  return out;
+}
+
+/** Treat any attachment whose `type` starts with image/ as renderable inline. */
+export function isInlineImage(att) {
+  return typeof att?.type === 'string' && att.type.startsWith(IMAGE_MIME_PREFIX);
+}
+
 /** Friendly icon character for a non-image file based on its mime/extension. */
 export function fileIconChar(file) {
   const t = file.type ?? '';

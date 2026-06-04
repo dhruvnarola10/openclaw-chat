@@ -143,12 +143,39 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
           let args = {};
           try { args = JSON.parse(evt.arguments ?? '{}'); }
           catch { args = { raw: evt.arguments }; }
+          // OpenAI Realtime requires us to send a function_call_output back
+          // on the data channel for every function_call. Without it the
+          // model stays in "awaiting tool" forever — voice UI gets stuck in
+          // "thinking" and stops accepting mic input. Send the gateway's
+          // response (or a stub for async tools like image_generate that
+          // return immediately with a task id) so the model can move on.
+          const callId = evt.call_id;
+          const sendFunctionOutput = (output, isError = false) => {
+            const dc = dcRef.current;
+            if (!dc || dc.readyState !== 'open') return;
+            try {
+              dc.send(JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                  type:    'function_call_output',
+                  call_id: callId,
+                  output:  typeof output === 'string' ? output : JSON.stringify(output ?? (isError ? { error: 'unknown' } : {})),
+                },
+              }));
+              dc.send(JSON.stringify({ type: 'response.create' }));
+            } catch (e) { console.warn('[talk] failed to send function_call_output:', e.message); }
+          };
           gateway.request('talk.client.toolCall', {
             sessionKey: sessionKeyRef.current,
-            callId:     evt.call_id,
+            callId,
             name:       evt.name,
             args,
-          }).catch((e) => console.warn('[talk] tool relay failed:', e.message));
+          })
+            .then((result) => sendFunctionOutput(result))
+            .catch((e) => {
+              console.warn('[talk] tool relay failed:', e.message);
+              sendFunctionOutput({ error: e.message ?? 'tool relay failed' }, true);
+            });
         }
         break;
       case 'error':
@@ -280,15 +307,37 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
       }, 800);
     }
 
-    // Tool calls
+    // Tool calls — Google Live blocks the conversation until we send a
+    // matching `toolResponse` frame back. Relay to the gateway, then echo
+    // the result (or an error stub) so the model can continue speaking.
     for (const call of msg.toolCall?.functionCalls ?? []) {
       if (gateway?.request && sessionKeyRef.current && call.id && call.name) {
+        const sendToolResponse = (response) => {
+          const ws = wsRef.current;
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          try {
+            ws.send(JSON.stringify({
+              toolResponse: {
+                functionResponses: [{
+                  id:       call.id,
+                  name:     call.name,
+                  response: (response && typeof response === 'object') ? response : { result: response ?? null },
+                }],
+              },
+            }));
+          } catch (e) { console.warn('[talk] failed to send toolResponse:', e.message); }
+        };
         gateway.request('talk.client.toolCall', {
           sessionKey: sessionKeyRef.current,
           callId:     call.id,
           name:       call.name,
           args:       call.args ?? {},
-        }).catch((e) => console.warn('[talk] tool relay failed:', e.message));
+        })
+          .then(sendToolResponse)
+          .catch((e) => {
+            console.warn('[talk] tool relay failed:', e.message);
+            sendToolResponse({ error: e.message ?? 'tool relay failed' });
+          });
       }
     }
   }, [gateway, playPcm16Chunk]);
@@ -459,6 +508,17 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
   }, [talkActive, start, stop]);
 
   useEffect(() => () => cleanup(), [cleanup]);
+
+  // Watchdog: if we sit in "thinking" longer than 15s while the call is
+  // still active, snap back to "listening" so the mic stops being held by
+  // a stalled tool call. A real reply (audio/text) will override this.
+  useEffect(() => {
+    if (!talkActive || state !== 'thinking') return;
+    const t = setTimeout(() => {
+      setState((s) => (s === 'thinking' ? 'listening' : s));
+    }, 15_000);
+    return () => clearTimeout(t);
+  }, [talkActive, state]);
 
   const speak = useCallback(() => { /* no-op for realtime — audio plays automatically */ }, []);
 

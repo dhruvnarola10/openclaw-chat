@@ -88,6 +88,28 @@ export function useGateway({ tokenRef, onModelsList }) {
     return () => gw.close();
   }, []);
 
+  // Tabs put to sleep stop firing the ping/stale timers — when the tab
+  // wakes up the WS may already be half-dead. Force a status check and
+  // reconnect on visibility-change / online events.
+  useEffect(() => {
+    const kick = () => {
+      const gw = gatewayRef.current;
+      if (!gw) return;
+      const s = gw.socket?.readyState;
+      if (s === WebSocket.CLOSED || s === WebSocket.CLOSING || s === undefined) {
+        gw.connect();
+      }
+    };
+    const onVis    = () => { if (document.visibilityState === 'visible') kick(); };
+    const onOnline = () => kick();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('online', onOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('online', onOnline);
+    };
+  }, []);
+
   const reconnect = useCallback(() => gatewayRef.current?.connect(), []);
   // Explicit user-initiated disconnect — sets manuallyClosed on the
   // underlying Gateway so _onClose won't auto-reconnect after 5s.

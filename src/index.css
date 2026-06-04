@@ -2335,6 +2335,71 @@ input, textarea { font-family: inherit; color: inherit; }
   flex-shrink: 0;
 }
 
+/* Loading state shown while resolving a MEDIA:<path> to a ticketed URL. */
+.msg-att-img-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  min-height: 120px;
+  border: 1px dashed var(--border);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+}
+
+/* "Unavailable / File not found" chip — used for attachments the gateway
+   referenced but couldn't serve, and for markdown <img> tags that 404. */
+.msg-att-missing,
+.md-img-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  max-width: 100%;
+}
+.msg-att-missing-icon,
+.md-img-missing-icon { color: #f87171; flex-shrink: 0; }
+.msg-att-missing-name,
+.md-img-missing-name {
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+}
+.msg-att-missing-pill,
+.md-img-missing-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.14);
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.msg-att-missing-msg,
+.md-img-missing-msg {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Inline markdown image when it DOES load. */
+.md-img-wrap { display: inline-block; max-width: 100%; }
+.md-img {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
 /* ─── Voice Button (in MessageInput) ──────────────────────────────── */
 .voice-btn {
   display: flex;

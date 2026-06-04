@@ -20,6 +20,11 @@ const PROTO_MAX = 4;
 const PING_INTERVAL_MS = 20_000;
 const RECONNECT_DELAY_MS = 5_000;
 const AUTH_FALLBACK_MS = 3_000;
+// If we hear nothing from the gateway for this long we treat the WS as
+// dead and force-reconnect. Backgrounded tabs, proxy timeouts, and broken
+// TCP connections all produce the same symptom: pings go out, nothing
+// comes back, and the browser never notices the socket is gone.
+const STALE_TIMEOUT_MS = 55_000;
 
 // Per-browser stable identity — sent as client.instanceId on every connect.
 // Without this, the gateway computes presenceKey = (device.id ?? instanceId
@@ -62,6 +67,8 @@ export class Gateway {
     this.connecting = false;
     this.authed    = false;
     this.pingTimer = null;
+    this.staleTimer = null;
+    this.lastRx    = 0;
     this.retryTimer = null;
     // True while the user has explicitly disconnected — suppresses the
     // 5s auto-reconnect that _onClose normally schedules. Cleared as soon
@@ -95,6 +102,7 @@ export class Gateway {
     this.manuallyClosed = true;
     clearTimeout(this.retryTimer);
     clearInterval(this.pingTimer);
+    clearInterval(this.staleTimer);
     this.connecting = false;
     this.authed = false;
     this.socket?.close();
@@ -143,13 +151,24 @@ export class Gateway {
     this.send('sessions.list');
     this.send('sessions.subscribe');
     this.send('models.list');
+    this.lastRx = Date.now();
     this.pingTimer = setInterval(() => this.send('ping'), PING_INTERVAL_MS);
+    // Stale-link detector: if pings stop being acked / nothing arrives,
+    // tear the socket down so onclose kicks the reconnect loop. WebSocket
+    // doesn't surface a half-open TCP state on its own.
+    this.staleTimer = setInterval(() => {
+      if (Date.now() - this.lastRx > STALE_TIMEOUT_MS) {
+        console.warn('[gateway] no traffic for', STALE_TIMEOUT_MS, 'ms — forcing reconnect');
+        try { this.socket?.close(); } catch { /* ignore */ }
+      }
+    }, PING_INTERVAL_MS);
   }
 
   _onClose() {
     this.connecting = false;
     this.authed = false;
     clearInterval(this.pingTimer);
+    clearInterval(this.staleTimer);
     this.onStatus('off');
     // Reject any pending requests so callers don't hang forever.
     for (const { reject } of this.pending.values()) {
@@ -163,6 +182,8 @@ export class Gateway {
   }
 
   _onMessage({ data }) {
+    // Any inbound frame counts as the link being alive — heartbeats too.
+    this.lastRx = Date.now();
     let msg;
     try { msg = JSON.parse(data); } catch { return; }
 

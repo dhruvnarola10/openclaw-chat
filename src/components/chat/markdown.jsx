@@ -2,7 +2,7 @@
 // system/command bubble, and the workspace task transcript.
 
 import { useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { AlertCircle, Check, Copy } from 'lucide-react';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -100,4 +100,38 @@ export const mdComponents = {
   a({ href, children }) {
     return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
   },
+  // Inline markdown images (`![alt](url)`). Fall back to a "Unavailable /
+  // File not found" chip when the URL 404s, mirroring how OpenClaw's
+  // built-in dashboard shows unresolvable attachments.
+  img({ src, alt, title }) {
+    return <MarkdownImage src={src} alt={alt} title={title} />;
+  },
 };
+
+function MarkdownImage({ src, alt, title }) {
+  const [broken, setBroken] = useState(false);
+  const filename = alt || title || filenameFromUrl(src) || 'image';
+  if (broken || !src) {
+    return (
+      <span className="md-img-missing" title={filename}>
+        <AlertCircle size={13} className="md-img-missing-icon" />
+        <span className="md-img-missing-name">{filename}</span>
+        <span className="md-img-missing-pill">Unavailable</span>
+        <span className="md-img-missing-msg">File not found</span>
+      </span>
+    );
+  }
+  return (
+    <a href={src} target="_blank" rel="noopener noreferrer" className="md-img-wrap">
+      <img src={src} alt={alt ?? ''} title={title} className="md-img" onError={() => setBroken(true)} />
+    </a>
+  );
+}
+
+function filenameFromUrl(u) {
+  if (typeof u !== 'string') return null;
+  try {
+    const path = new URL(u, 'http://x').pathname;
+    return path.split('/').pop() || null;
+  } catch { return null; }
+}

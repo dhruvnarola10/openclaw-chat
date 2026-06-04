@@ -18,11 +18,13 @@ function safeEq(a, b) {
 export function requireAuth(req, res, next) {
   const header = req.get('authorization') ?? '';
   const m = header.match(/^Bearer\s+(.+)$/i);
-  // SSE endpoints (`/stream`) accept ?token=... because EventSource
-  // can't set Authorization headers from the browser. Other paths still
-  // require the header to keep tokens out of normal access logs.
+  // SSE endpoints (`/stream`) and the media proxy (`/media/*`, hit by
+  // `<img src=>`) accept ?token=... because neither EventSource nor the
+  // image element can set Authorization headers from the browser.
+  // Other paths still require the header to keep tokens out of access logs.
   const fromHeader = m?.[1] ?? '';
-  const fromQuery  = req.path.endsWith('/stream') ? (req.query.token ?? '') : '';
+  const allowQuery = req.path.endsWith('/stream') || req.path.startsWith('/media/');
+  const fromQuery  = allowQuery ? (req.query.token ?? '') : '';
   const token = fromHeader || fromQuery;
 
   if (!token) {
