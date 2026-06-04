@@ -49,14 +49,34 @@ router.get('/proxy', async (req, res, next) => {
     // ── Step 1: meta ──────────────────────────────────────────────────
     const metaParams = new URLSearchParams({ source, meta: '1' });
     if (gatewayToken) metaParams.set('token', gatewayToken);
-    const metaResp = await fetch(`${origin}${MEDIA_PATH}?${metaParams.toString()}`, {
-      headers: gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {},
-    });
+    const metaUrl = `${origin}${MEDIA_PATH}?${metaParams.toString()}`;
+    let metaResp;
+    try {
+      metaResp = await fetch(metaUrl, {
+        headers: gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {},
+      });
+    } catch (e) {
+      console.warn('[media] meta network error:', metaUrl, e?.message);
+      return res.status(502).json({ error: { code: 'UPSTREAM', message: `cannot reach gateway: ${e?.message ?? e}` } });
+    }
     if (!metaResp.ok) {
       return res.status(metaResp.status === 401 ? 401 : 502)
-        .json({ error: { code: 'UPSTREAM', message: `gateway meta ${metaResp.status}` } });
+        .json({ error: { code: 'UPSTREAM', message: `gateway meta ${metaResp.status} at ${metaUrl}` } });
     }
-    const meta = await metaResp.json();
+    // If nginx forwards `/__openclaw__/*` to a SPA fallback instead of the
+    // gateway, the response is HTML with status 200 — surface that clearly
+    // instead of crashing on JSON.parse.
+    const ct = metaResp.headers.get('content-type') ?? '';
+    if (!ct.includes('json')) {
+      console.warn('[media] meta returned non-JSON. Likely the `/__openclaw__/` nginx rule is missing.', { metaUrl, contentType: ct });
+      return res.status(502).json({
+        error: {
+          code: 'NO_GATEWAY_ROUTE',
+          message: `Gateway URL is not forwarding /__openclaw__/* — got Content-Type "${ct}" from ${metaUrl}. Add an nginx location for /__openclaw__/ that proxy_passes to the OpenClaw gateway.`,
+        },
+      });
+    }
+    const meta = await metaResp.json().catch(() => null);
     if (!meta?.available || !meta?.mediaTicket) {
       return res.status(404).json({
         error: { code: meta?.code ?? 'NOT_FOUND', message: meta?.reason ?? 'File not found' },
