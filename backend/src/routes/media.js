@@ -36,8 +36,8 @@ function gatewayOrigin(urlString) {
 router.get('/proxy', async (req, res, next) => {
   try {
     const source       = String(req.query.source ?? '');
-    const gatewayUrl   = String(req.query.gw     ?? '');
-    const gatewayToken = String(req.query.gt     ?? '');
+    const gatewayUrl   = String(req.get('x-gateway-url')   ?? req.query.gw ?? '');
+    const gatewayToken = String(req.get('x-gateway-token') ?? req.query.gt ?? '');
     if (!source || !gatewayUrl) {
       return res.status(400).json({ error: { code: 'INVALID', message: 'source + gw are required' } });
     }

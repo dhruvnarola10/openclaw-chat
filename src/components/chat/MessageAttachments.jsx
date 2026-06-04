@@ -9,10 +9,10 @@
 //                                  download link.
 //   • Already-unavailable items  → same fallback chip with no download.
 
-import { useState } from 'react';
-import { AlertCircle, Download } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertCircle, Download, Loader2 } from 'lucide-react';
 import { fileIconChar, formatBytes, isImage, isInlineImage } from '../../utils/files.js';
-import { mediaProxyUrl } from '../../api/media.js';
+import { fetchMediaBlobUrl } from '../../api/media.js';
 
 export default function MessageAttachments({ attachments }) {
   if (!attachments?.length) return null;
@@ -43,32 +43,47 @@ export default function MessageAttachments({ attachments }) {
 }
 
 function ImageThumb({ att }) {
-  // Track the broken state per image so we can swap to the unavailable
-  // chip on a 404/403/CORS failure without remounting siblings.
-  const [broken, setBroken] = useState(false);
+  // Direct sources (user upload data URL, agent-provided http URL) render
+  // immediately. `mediaSource` references need a fetch through the backend
+  // proxy → wrapped as a blob: URL so it goes into the DOM clean and the
+  // token never appears in the rendered <img src>.
+  const directSrc = att.dataUrl ?? att.url ?? att.preview ?? null;
+  const [resolved, setResolved] = useState(directSrc);
+  const [broken, setBroken]     = useState(false);
+  const loading = !resolved && !broken && !!att.mediaSource;
 
-  // For MEDIA:<path> / message-tool path refs, route through our backend
-  // proxy. For direct dataUrls or http(s) URLs, use them as-is.
-  const proxied = att.mediaSource ? mediaProxyUrl(att.mediaSource) : null;
-  const src  = att.dataUrl ?? att.url ?? att.preview ?? proxied;
-  const href = src;
+  useEffect(() => {
+    if (resolved || !att.mediaSource) return;
+    let alive = true;
+    fetchMediaBlobUrl(att.mediaSource)
+      .then((u) => {
+        if (!alive) return;
+        if (u) setResolved(u);
+        else   setBroken(true);
+      })
+      .catch(() => { if (alive) setBroken(true); });
+    return () => { alive = false; };
+  }, [att.mediaSource, resolved]);
 
-  if (!src || broken) {
-    if (typeof console !== 'undefined') {
-      console.warn('[media] attachment not renderable:', { name: att.name, mediaSource: att.mediaSource, hasProxyUrl: !!proxied, hasJwt: !!localStorage.getItem('oc-jwt'), hasGatewayUrl: !!localStorage.getItem('oc-apiUrl') });
-    }
-    return <UnavailableChip name={att.name} />;
+  if (broken) return <UnavailableChip name={att.name} />;
+  if (loading) {
+    return (
+      <div className="msg-att-img-wrap msg-att-img-loading" title={att.name}>
+        <Loader2 size={16} className="spin" />
+      </div>
+    );
   }
+  if (!resolved) return <UnavailableChip name={att.name} />;
 
   return (
     <a
-      href={href}
+      href={resolved}
       target="_blank"
       rel="noopener noreferrer"
       className="msg-att-img-wrap"
       title={att.size ? `${att.name} · ${formatBytes(att.size)}` : att.name}
     >
-      <img src={src} alt={att.name} className="msg-att-img" onError={() => setBroken(true)} />
+      <img src={resolved} alt={att.name} className="msg-att-img" onError={() => setBroken(true)} />
     </a>
   );
 }
