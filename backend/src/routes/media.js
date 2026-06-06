@@ -66,13 +66,13 @@ router.get('/proxy', async (req, res, next) => {
     // If nginx forwards `/__openclaw__/*` to a SPA fallback instead of the
     // gateway, the response is HTML with status 200 — surface that clearly
     // instead of crashing on JSON.parse.
-    const ct = metaResp.headers.get('content-type') ?? '';
-    if (!ct.includes('json')) {
-      console.warn('[media] meta returned non-JSON. Likely the `/__openclaw__/` nginx rule is missing.', { metaUrl, contentType: ct });
+    const metaCt = metaResp.headers.get('content-type') ?? '';
+    if (!metaCt.includes('json')) {
+      console.warn('[media] meta returned non-JSON. Likely the `/__openclaw__/` nginx rule is missing.', { metaUrl, contentType: metaCt });
       return res.status(502).json({
         error: {
           code: 'NO_GATEWAY_ROUTE',
-          message: `Gateway URL is not forwarding /__openclaw__/* — got Content-Type "${ct}" from ${metaUrl}. Add an nginx location for /__openclaw__/ that proxy_passes to the OpenClaw gateway.`,
+          message: `Gateway URL is not forwarding /__openclaw__/* — got Content-Type "${metaCt}" from ${metaUrl}. Add an nginx location for /__openclaw__/ that proxy_passes to the OpenClaw gateway.`,
         },
       });
     }
