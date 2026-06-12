@@ -3,8 +3,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, Eye, EyeOff, LogOut, Monitor, Moon, Plug, PowerOff,
-  RefreshCw, RotateCw, Sun,
+  Activity, AlertTriangle, Eye, EyeOff, LogOut, Loader2, Monitor, Moon,
+  Plug, PowerOff, RefreshCw, RotateCw, Sun, Trash2,
 } from 'lucide-react';
 import { useOverview } from '../../hooks/useOverview.js';
 import { ago, compactNumber, parseSessionKey } from '../../utils/format.js';
@@ -229,6 +229,12 @@ export default function OverviewView({ config, gateway, theme = 'dark', onCycleT
       <RecentSessions sessions={data?.sessions ?? []} models={data?.models ?? []} />
 
       <EventLog gateway={gateway} />
+
+      <DangerZone
+        gateway={gateway}
+        sessions={data?.sessions ?? []}
+        onAfterDelete={refresh}
+      />
 
       <footer className="ov-foot">
         {error && <span className="ov-err">{error}</span>}
@@ -592,6 +598,160 @@ function Mini({ label, value }) {
     <div className="ov-tile" style={{ padding: '10px 14px' }}>
       <div className="ov-tile-title" style={{ fontSize: 10 }}>{label}</div>
       <div className="ov-tile-value" style={{ fontSize: 18 }}>{value ?? 0}</div>
+    </div>
+  );
+}
+
+// ── Danger zone — delete all sessions ────────────────────────────────────
+//
+// OpenClaw has no `sessions.deleteAll` RPC, so we loop `sessions.delete`
+// over the current list — same approach as the built-in dashboard. We
+// chunk the calls slightly so the gateway isn't slammed with a hundred
+// concurrent requests on big workspaces.
+
+function DangerZone({ gateway, sessions, onAfterDelete }) {
+  const isOn  = gateway.status === 'on';
+  const count = sessions.length;
+
+  // 'idle' | 'confirm' | 'deleting' | 'done' | 'error'
+  const [state, setState]       = useState('idle');
+  const [progress, setProgress] = useState({ done: 0, failed: 0, total: 0 });
+  const [error,   setError]     = useState('');
+
+  const runDelete = async () => {
+    setState('deleting');
+    setError('');
+    setProgress({ done: 0, failed: 0, total: count });
+
+    let done = 0, failed = 0;
+    // Small concurrency cap — gateway shouldn't choke, and progress feels live.
+    const queue = [...sessions];
+    const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+      while (queue.length) {
+        const s = queue.shift();
+        if (!s?.key) { continue; }
+        try {
+          await gateway.request('sessions.delete', { key: s.key, deleteTranscript: true });
+          done += 1;
+        } catch {
+          failed += 1;
+        }
+        setProgress({ done, failed, total: count });
+      }
+    });
+    try {
+      await Promise.all(workers);
+      setState(failed === 0 ? 'done' : 'error');
+      if (failed !== 0) setError(`${failed} of ${count} session${count === 1 ? '' : 's'} failed to delete.`);
+      onAfterDelete?.();
+    } catch (e) {
+      setError(e?.message ?? String(e));
+      setState('error');
+    }
+  };
+
+  return (
+    <section className="ov-card ov-card--danger">
+      <div className="ov-card-head">
+        <h2><AlertTriangle size={14} style={{ color: '#f87171' }} /> Danger zone</h2>
+        <p>Irreversible actions. Use with care.</p>
+      </div>
+
+      <div className="ov-danger-row">
+        <div className="ov-danger-info">
+          <div className="ov-danger-title">Delete all sessions</div>
+          <div className="ov-danger-sub">
+            Removes every session on the gateway ({count} currently tracked),
+            including transcripts. Local chat threads in this browser are not affected.
+          </div>
+        </div>
+        <button
+          className="ov-btn ov-btn--danger"
+          disabled={!isOn || count === 0 || state === 'deleting'}
+          onClick={() => setState('confirm')}
+          title={!isOn ? 'Gateway offline' : count === 0 ? 'No sessions to delete' : 'Delete all sessions'}
+        >
+          <Trash2 size={14} />
+          <span>Delete all sessions</span>
+        </button>
+      </div>
+
+      {(state === 'confirm' || state === 'deleting' || state === 'done' || state === 'error') && (
+        <DeleteAllSessionsDialog
+          state={state}
+          count={count}
+          progress={progress}
+          error={error}
+          onConfirm={runDelete}
+          onClose={() => { setState('idle'); setError(''); }}
+        />
+      )}
+    </section>
+  );
+}
+
+function DeleteAllSessionsDialog({ state, count, progress, error, onConfirm, onClose }) {
+  const pct = progress.total ? Math.round(((progress.done + progress.failed) / progress.total) * 100) : 0;
+  return (
+    <div className="dialog-overlay" onClick={state === 'deleting' ? undefined : onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ minWidth: 420 }}>
+        <h3>
+          {state === 'confirm'  && 'Delete all sessions?'}
+          {state === 'deleting' && 'Deleting sessions…'}
+          {state === 'done'     && 'All sessions deleted ✓'}
+          {state === 'error'    && 'Some sessions did not delete'}
+        </h3>
+
+        {state === 'confirm' && (
+          <p style={{ marginBottom: 12, fontSize: 13.5, color: 'var(--text-muted)' }}>
+            This will permanently remove <strong>{count}</strong> session{count === 1 ? '' : 's'}
+            and their transcripts on the gateway. This can't be undone.
+          </p>
+        )}
+
+        {state === 'deleting' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <Loader2 size={16} className="spin" />
+              <span style={{ fontSize: 13.5 }}>
+                {progress.done + progress.failed} / {progress.total}
+              </span>
+            </div>
+            <div style={{ height: 6, background: 'var(--bg-raised)', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: '#f87171', transition: 'width 0.2s' }} />
+            </div>
+          </>
+        )}
+
+        {state === 'done' && (
+          <p style={{ margin: 0, fontSize: 13.5 }}>
+            Removed {progress.done} session{progress.done === 1 ? '' : 's'} on the gateway.
+          </p>
+        )}
+
+        {state === 'error' && (
+          <p className="page-toast page-toast--error" style={{ margin: 0 }}>
+            {error || 'Unknown error'}
+          </p>
+        )}
+
+        <div className="dialog-actions" style={{ marginTop: 18 }}>
+          {state === 'confirm' && (
+            <>
+              <button className="dialog-cancel" onClick={onClose}>Cancel</button>
+              <button className="dialog-confirm" onClick={onConfirm} style={{ background: '#f87171', color: '#fff' }}>
+                Delete {count}
+              </button>
+            </>
+          )}
+          {(state === 'done' || state === 'error') && (
+            <button className="dialog-confirm" onClick={onClose}>Close</button>
+          )}
+          {state === 'deleting' && (
+            <button className="dialog-cancel" disabled>Deleting…</button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

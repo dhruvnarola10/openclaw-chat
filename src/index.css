@@ -2828,6 +2828,43 @@ input, textarea { font-family: inherit; color: inherit; }
 .ov-btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .ov-btn--primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 .ov-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.ov-btn--danger {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #f87171;
+}
+.ov-btn--danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: #f87171;
+}
+
+/* Danger zone card at the bottom of Overview. Visually de-emphasised but
+   the row inside keeps its own emphasis via the red action button. */
+.ov-card--danger {
+  border-color: rgba(248, 113, 113, 0.25);
+}
+.ov-danger-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 0;
+}
+.ov-danger-info { flex: 1; min-width: 0; }
+.ov-danger-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.ov-danger-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+@media (max-width: 640px) {
+  .ov-danger-row { flex-direction: column; align-items: stretch; }
+  .ov-danger-row .ov-btn--danger { justify-content: center; }
+}
 
 .ov-status {
   display: inline-flex;
