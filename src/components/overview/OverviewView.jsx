@@ -13,7 +13,7 @@ import { channelMeta } from '../../utils/channels.js';
 const THEME_ICON = { dark: Moon, light: Sun, system: Monitor };
 const THEME_NEXT = { dark: 'light', light: 'system', system: 'dark' };
 
-export default function OverviewView({ config, gateway, theme = 'dark', onCycleTheme, user, onLogout }) {
+export default function OverviewView({ config, gateway, theme = 'dark', onCycleTheme, user, onLogout, threadOps }) {
   const { data, loading, error, refresh, lastAt } = useOverview({ gateway });
   const ThemeIcon = THEME_ICON[theme] ?? Moon;
   const isOn = gateway.status === 'on';
@@ -233,6 +233,7 @@ export default function OverviewView({ config, gateway, theme = 'dark', onCycleT
       <DangerZone
         gateway={gateway}
         sessions={data?.sessions ?? []}
+        threadOps={threadOps}
         onAfterDelete={refresh}
       />
 
@@ -609,19 +610,22 @@ function Mini({ label, value }) {
 // chunk the calls slightly so the gateway isn't slammed with a hundred
 // concurrent requests on big workspaces.
 
-function DangerZone({ gateway, sessions, onAfterDelete }) {
+function DangerZone({ gateway, sessions, threadOps, onAfterDelete }) {
   const isOn  = gateway.status === 'on';
-  const count = sessions.length;
+  const gwCount     = sessions.length;
+  const threadCount = threadOps?.threads?.length ?? 0;
+  const totalCount  = gwCount + threadCount;
 
   // 'idle' | 'confirm' | 'deleting' | 'done' | 'error'
-  const [state, setState]       = useState('idle');
-  const [progress, setProgress] = useState({ done: 0, failed: 0, total: 0 });
-  const [error,   setError]     = useState('');
+  const [state, setState]                = useState('idle');
+  const [progress, setProgress]          = useState({ done: 0, failed: 0, total: 0 });
+  const [error,   setError]              = useState('');
+  const [alsoClearLocal, setAlsoClearLocal] = useState(true);
 
   const runDelete = async () => {
     setState('deleting');
     setError('');
-    setProgress({ done: 0, failed: 0, total: count });
+    setProgress({ done: 0, failed: 0, total: gwCount });
 
     let done = 0, failed = 0;
     // Small concurrency cap — gateway shouldn't choke, and progress feels live.
@@ -636,13 +640,18 @@ function DangerZone({ gateway, sessions, onAfterDelete }) {
         } catch {
           failed += 1;
         }
-        setProgress({ done, failed, total: count });
+        setProgress({ done, failed, total: gwCount });
       }
     });
     try {
       await Promise.all(workers);
+      // Wipe local chat threads too, if requested. clearAll() drops
+      // `oc-threads` + `oc-activeId` in localStorage and the sidebar list.
+      if (alsoClearLocal && threadOps?.clearAll) {
+        try { threadOps.clearAll(); } catch { /* ignore */ }
+      }
       setState(failed === 0 ? 'done' : 'error');
-      if (failed !== 0) setError(`${failed} of ${count} session${count === 1 ? '' : 's'} failed to delete.`);
+      if (failed !== 0) setError(`${failed} of ${gwCount} session${gwCount === 1 ? '' : 's'} failed to delete.`);
       onAfterDelete?.();
     } catch (e) {
       setError(e?.message ?? String(e));
@@ -661,25 +670,29 @@ function DangerZone({ gateway, sessions, onAfterDelete }) {
         <div className="ov-danger-info">
           <div className="ov-danger-title">Delete all sessions</div>
           <div className="ov-danger-sub">
-            Removes every session on the gateway ({count} currently tracked),
-            including transcripts. Local chat threads in this browser are not affected.
+            Wipes every session on the gateway ({gwCount} currently tracked)
+            and, by default, every local chat thread on this browser ({threadCount}).
+            Uncheck the option in the dialog to keep the local threads.
           </div>
         </div>
         <button
           className="ov-btn ov-btn--danger"
-          disabled={!isOn || count === 0 || state === 'deleting'}
+          disabled={!isOn || totalCount === 0 || state === 'deleting'}
           onClick={() => setState('confirm')}
-          title={!isOn ? 'Gateway offline' : count === 0 ? 'No sessions to delete' : 'Delete all sessions'}
+          title={!isOn ? 'Gateway offline' : totalCount === 0 ? 'Nothing to delete' : 'Delete all'}
         >
           <Trash2 size={14} />
-          <span>Delete all sessions</span>
+          <span>Delete all</span>
         </button>
       </div>
 
       {(state === 'confirm' || state === 'deleting' || state === 'done' || state === 'error') && (
         <DeleteAllSessionsDialog
           state={state}
-          count={count}
+          gwCount={gwCount}
+          threadCount={threadCount}
+          alsoClearLocal={alsoClearLocal}
+          onToggleClearLocal={() => setAlsoClearLocal((v) => !v)}
           progress={progress}
           error={error}
           onConfirm={runDelete}
@@ -690,11 +703,14 @@ function DangerZone({ gateway, sessions, onAfterDelete }) {
   );
 }
 
-function DeleteAllSessionsDialog({ state, count, progress, error, onConfirm, onClose }) {
+function DeleteAllSessionsDialog({
+  state, gwCount, threadCount, alsoClearLocal, onToggleClearLocal,
+  progress, error, onConfirm, onClose,
+}) {
   const pct = progress.total ? Math.round(((progress.done + progress.failed) / progress.total) * 100) : 0;
   return (
     <div className="dialog-overlay" onClick={state === 'deleting' ? undefined : onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ minWidth: 420 }}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ minWidth: 440 }}>
         <h3>
           {state === 'confirm'  && 'Delete all sessions?'}
           {state === 'deleting' && 'Deleting sessions…'}
@@ -703,10 +719,20 @@ function DeleteAllSessionsDialog({ state, count, progress, error, onConfirm, onC
         </h3>
 
         {state === 'confirm' && (
-          <p style={{ marginBottom: 12, fontSize: 13.5, color: 'var(--text-muted)' }}>
-            This will permanently remove <strong>{count}</strong> session{count === 1 ? '' : 's'}
-            and their transcripts on the gateway. This can't be undone.
-          </p>
+          <>
+            <p style={{ marginBottom: 12, fontSize: 13.5, color: 'var(--text-muted)' }}>
+              This will permanently remove <strong>{gwCount}</strong> session{gwCount === 1 ? '' : 's'}
+              and their transcripts on the gateway. This can't be undone.
+            </p>
+            {threadCount > 0 && (
+              <label className="dialog-check" style={{ marginBottom: 12 }}>
+                <input type="checkbox" checked={alsoClearLocal} onChange={onToggleClearLocal} />
+                <span>
+                  Also clear my {threadCount} local chat thread{threadCount === 1 ? '' : 's'} on this browser
+                </span>
+              </label>
+            )}
+          </>
         )}
 
         {state === 'deleting' && (
@@ -740,7 +766,7 @@ function DeleteAllSessionsDialog({ state, count, progress, error, onConfirm, onC
             <>
               <button className="dialog-cancel" onClick={onClose}>Cancel</button>
               <button className="dialog-confirm" onClick={onConfirm} style={{ background: '#f87171', color: '#fff' }}>
-                Delete {count}
+                Delete {gwCount + (alsoClearLocal ? threadCount : 0)}
               </button>
             </>
           )}

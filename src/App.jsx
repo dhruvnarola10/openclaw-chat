@@ -91,7 +91,8 @@ function Authed({ onLogout, user }) {
       <ErrorBoundary key={view}>
         {view === 'overview' && <OverviewView config={configBundle} gateway={gateway}
                                               theme={theme} onCycleTheme={cycleTheme}
-                                              user={user} onLogout={onLogout} />}
+                                              user={user} onLogout={onLogout}
+                                              threadOps={threadOps} />}
         {view === 'chat'     && <ChatView config={configBundle} models={modelsBundle} threadOps={threadOps} gateway={gateway}
                                           pendingJoinKey={pendingJoinKey} onPendingJoinHandled={() => setPendingJoinKey(null)} />}
         {view === 'usage'    && <UsageView config={configBundle} gateway={gateway} />}
