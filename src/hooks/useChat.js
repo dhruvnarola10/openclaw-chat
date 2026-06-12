@@ -60,7 +60,17 @@ export function useChat({ apiUrl, token, agentId, model, stream, gateway, thread
     if ((!text && attachments.length === 0) || loading) return;
 
     const isCommand = text.startsWith('/');
-    const { threadId, sessionKey } = threadOps.startTurn({ text, isCommand, attachments });
+    const { threadId, sessionKey: rawSessionKey } = threadOps.startTurn({ text, isCommand, attachments });
+
+    // Hard guarantee: never call the gateway with a missing key. The OpenClaw
+    // gateway rejects chat.send with `at /sessionKey: must be string` and we
+    // surface an obscure red bubble — fix it here instead.
+    const sessionKey = (typeof rawSessionKey === 'string' && rawSessionKey)
+      ? rawSessionKey
+      : `agent:${agentId || 'main'}:web:${threadId}`;
+    if (sessionKey !== rawSessionKey) {
+      console.warn('[chat] startTurn returned invalid sessionKey, falling back:', { rawSessionKey, sessionKey });
+    }
 
     setLoading(true);
 

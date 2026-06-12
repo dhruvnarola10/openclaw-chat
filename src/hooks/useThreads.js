@@ -76,8 +76,12 @@ export function useThreads({ agentId }) {
     };
     const titleText = isCommand ? '' : clip(text, 38);
 
-    let resolvedThreadId = activeId;
-    let resolvedSessionKey = null;
+    // Pre-compute a fallback sessionKey so we can NEVER return null/undefined
+    // — the OpenClaw gateway rejects chat.send with "invalid params: at
+    // /sessionKey: must be string" if the key isn't a non-empty string.
+    const safeAgentId = (typeof agentId === 'string' && agentId) ? agentId : 'main';
+    let resolvedThreadId   = activeId;
+    let resolvedSessionKey = `agent:${safeAgentId}:web:${activeId || genId()}`;
 
     setThreads((prev) => {
       const existing = prev.find((t) => t.id === activeId);
@@ -87,7 +91,7 @@ export function useThreads({ agentId }) {
         // Generate one and persist it back so subsequent sends don't break.
         resolvedSessionKey = (typeof existing.sessionKey === 'string' && existing.sessionKey)
           ? existing.sessionKey
-          : `agent:${agentId}:web:${existing.id}`;
+          : `agent:${safeAgentId}:web:${existing.id}`;
         return prev.map((t) => t.id !== existing.id ? t : {
           ...t,
           sessionKey: resolvedSessionKey,
@@ -98,7 +102,7 @@ export function useThreads({ agentId }) {
       }
       const id = genId();
       resolvedThreadId   = id;
-      resolvedSessionKey = `agent:${agentId}:web:${id}`;
+      resolvedSessionKey = `agent:${safeAgentId}:web:${id}`;
       return [
         {
           id, title: titleText, sessionKey: resolvedSessionKey,
