@@ -2,7 +2,7 @@
 // + multi-modal attachments (click, drag-drop, clipboard paste).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Paperclip, Radio, Send, Square, Volume2 } from 'lucide-react';
+import { Mic, Paperclip, Pause, Radio, Send, Volume2 } from 'lucide-react';
 import SlashPopup       from './SlashPopup.jsx';
 import AttachmentList   from './AttachmentList.jsx';
 import { useAttachments } from '../../hooks/useAttachments.js';
@@ -173,7 +173,7 @@ export default function MessageInput({
               </button>
             )} */}
             {loading
-              ? <button className="stop-btn" onClick={onStop} title="Stop"><Square size={16} /></button>
+              ? <button className="stop-btn" onClick={onStop} title="Pause" aria-label="Pause generation"><Pause size={16} /></button>
               : (
                 <button
                   className="send-btn"
