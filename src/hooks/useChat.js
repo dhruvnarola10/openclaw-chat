@@ -105,13 +105,19 @@ export function useChat({ apiUrl, token, agentId, model, stream, gateway, thread
   }, [apiUrl, token, agentId, model, stream, gateway, loading, threadOps]);
 
   const stop = useCallback(() => {
-    // Abort whichever path is in flight.
+    // HTTP path — synchronous, throws AbortError → caught by send()'s catch.
     abortRef.current?.abort();
+
+    // WS path — tell the gateway to stop the run AND finalise the bubble
+    // locally so the user gets instant feedback. abort() (set up inside
+    // sendViaWs) patches the message non-streaming, resolves the pending
+    // donePromise, and cleans up the subscription. Without this last step,
+    // setLoading(false) never runs (the `finally` clause waits on
+    // donePromise) and the pause button stays stuck forever.
     const ws = wsActiveRef.current;
     if (ws) {
       gateway?.request?.('chat.abort', { sessionKey: ws.sessionKey }).catch(() => {});
-      ws.unsubscribe?.();
-      wsActiveRef.current = null;
+      ws.abort?.();
     }
   }, [gateway]);
 
@@ -305,7 +311,25 @@ async function sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps
     unsubscribe();
     if (wsActiveRef.current?.sessionKey === sessionKey) wsActiveRef.current = null;
   };
-  wsActiveRef.current = { sessionKey, unsubscribe: cleanup };
+
+  // Stop() must be able to finalise the bubble locally — we cannot rely on
+  // the gateway emitting `state:'aborted'` for us, because the user clicking
+  // pause needs immediate visual feedback AND because some gateway runs
+  // (subagent, async tool waits) never emit a closing event after a chat.abort.
+  // The HTTP path gets this for free via AbortController; do the equivalent
+  // here so `await donePromise` returns and the `setLoading(false)` finally
+  // runs. Any future events on this runId land on no subscriber, harmless.
+  const abortLocal = () => {
+    threadOps.patchLast(threadId, (m) => ({
+      ...m,
+      streaming:         false,
+      thinkingStreaming: false,
+      waiting:           false,
+    }));
+    cleanup();
+    resolveDone();
+  };
+  wsActiveRef.current = { sessionKey, unsubscribe: cleanup, abort: abortLocal };
 
   // 3. Send. The server's response is just an ack — the actual reply comes
   //    via the chat events we just subscribed to.
