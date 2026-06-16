@@ -205,19 +205,20 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     const pc = new RTCPeerConnection({ iceServers });
     pcRef.current = pc;
 
-    const audioEl = document.createElement('audio');
-    audioEl.autoplay = true;
-    // iOS Safari and most embedded iOS webviews refuse to play media unless
-    // `playsinline` is set; without it the model's voice is silent on iPhone
-    // even though the WebRTC track arrives correctly. Also `webkit-` aliases
-    // for older Safari versions.
-    audioEl.playsInline = true;
-    audioEl.setAttribute('playsinline', '');
-    audioEl.setAttribute('webkit-playsinline', '');
-    audioEl.muted = false;
-    audioEl.style.display = 'none';
-    document.body.appendChild(audioEl);
-    audioElRef.current = audioEl;
+    // Re-use the <audio> element start() created in the user-gesture chain.
+    // If for some reason it wasn't created, fall back to making one here
+    // (desktop path, where autoplay isn't a problem).
+    let audioEl = audioElRef.current;
+    if (!audioEl) {
+      audioEl = document.createElement('audio');
+      audioEl.autoplay = true;
+      audioEl.playsInline = true;
+      audioEl.setAttribute('playsinline', '');
+      audioEl.setAttribute('webkit-playsinline', '');
+      audioEl.style.display = 'none';
+      document.body.appendChild(audioEl);
+      audioElRef.current = audioEl;
+    }
 
     pc.ontrack = (e) => {
       audioEl.srcObject = e.streams[0];
@@ -250,7 +251,10 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
       }
     };
 
-    const stream = await navigator.mediaDevices.getUserMedia({
+    // Re-use the mic stream start() acquired during the user gesture. Only
+    // request a fresh one if there isn't one yet (e.g. talk re-started
+    // without the full start() chain, or a desktop path that skipped it).
+    const stream = streamRef.current ?? await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     streamRef.current = stream;
@@ -397,7 +401,8 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     }
     const wsUrl = buildGoogleLiveUrl(session);
 
-    const stream = await navigator.mediaDevices.getUserMedia({
+    // Re-use the gesture-acquired stream from start() if present.
+    const stream = streamRef.current ?? await navigator.mediaDevices.getUserMedia({
       audio: { autoGainControl: true, echoCancellation: true, noiseSuppression: true },
     });
     streamRef.current = stream;
@@ -490,6 +495,51 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     setUserInterim('');
     setAssistantSpeaking('');
     setTransportInUse(null);
+
+    // ── iOS Safari mobile-voice fix ────────────────────────────────────
+    // Two gesture-sensitive operations need to happen BEFORE any network
+    // await — otherwise iOS treats them as "not user-initiated" and either
+    // silently denies the mic or refuses to play the model's voice.
+    //
+    //   1. getUserMedia(): the very first call to ask for mic permission
+    //      MUST be inside the user-gesture chain (the talk-button click).
+    //      Once permission is granted we can re-use the stream later.
+    //   2. <audio> element creation + a synchronous `.play()` on it: locks
+    //      in the autoplay allowance so subsequent `pc.ontrack` plays the
+    //      model's voice instead of being silently muted on iPhone.
+    //
+    // Doing these AFTER `await gateway.request(...)` (the old order) broke
+    // both — the click had already been consumed by then.
+
+    // Pre-play a silent <audio> element to unlock autoplay on iOS Safari.
+    try {
+      const audioEl = document.createElement('audio');
+      audioEl.autoplay = true;
+      audioEl.playsInline = true;
+      audioEl.setAttribute('playsinline', '');
+      audioEl.setAttribute('webkit-playsinline', '');
+      audioEl.muted = false;
+      audioEl.style.display = 'none';
+      document.body.appendChild(audioEl);
+      audioElRef.current = audioEl;
+      // Fire-and-forget — failure is fine, just means iOS still requires
+      // the click to bridge to ontrack which we already handle.
+      const p = audioEl.play();
+      if (p?.catch) p.catch(() => { /* ignore */ });
+    } catch { /* DOM not ready? extremely unlikely */ }
+
+    // Pre-acquire mic stream while the gesture is still live.
+    try {
+      streamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (err) {
+      setError(`Microphone access denied (${err?.name || 'error'}). Check Settings → Safari → Camera & Microphone.`);
+      setState('idle');
+      setTalkActive(false);
+      cleanup();
+      return;
+    }
 
     try {
       const sessionKey =
