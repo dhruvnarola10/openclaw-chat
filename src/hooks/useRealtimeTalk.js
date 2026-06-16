@@ -207,11 +207,28 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
 
     const audioEl = document.createElement('audio');
     audioEl.autoplay = true;
+    // iOS Safari and most embedded iOS webviews refuse to play media unless
+    // `playsinline` is set; without it the model's voice is silent on iPhone
+    // even though the WebRTC track arrives correctly. Also `webkit-` aliases
+    // for older Safari versions.
+    audioEl.playsInline = true;
+    audioEl.setAttribute('playsinline', '');
+    audioEl.setAttribute('webkit-playsinline', '');
+    audioEl.muted = false;
     audioEl.style.display = 'none';
     document.body.appendChild(audioEl);
     audioElRef.current = audioEl;
 
-    pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; };
+    pc.ontrack = (e) => {
+      audioEl.srcObject = e.streams[0];
+      // Explicit play() so the user-gesture chain (button click → start →
+      // ontrack) keeps the autoplay policy happy on iOS. Errors here mean
+      // the browser ignored autoplay anyway — log so we can surface it.
+      const p = audioEl.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch((err) => console.warn('[talk:webrtc] audio play() rejected:', err?.message ?? err));
+      }
+    };
 
     // Watch the ICE / connection state so we can SURFACE the failure
     // instead of staying silently in "listening" forever. Most NAT-induced
@@ -385,8 +402,19 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     });
     streamRef.current = stream;
 
-    inputCtxRef.current  = new AudioContext({ sampleRate: session.audio.inputSampleRateHz  });
-    outputCtxRef.current = new AudioContext({ sampleRate: session.audio.outputSampleRateHz });
+    // iOS Safari and several Android browsers ignore the constructor's
+    // sampleRate hint AND start every AudioContext in `suspended` state.
+    // We need to explicitly resume() after a user gesture (the talk-button
+    // click is one — we're inside its async chain). Without this the input
+    // ScriptProcessor never produces audio frames and the output buffer
+    // queue silently stalls.
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    inputCtxRef.current  = new Ctx({ sampleRate: session.audio.inputSampleRateHz  });
+    outputCtxRef.current = new Ctx({ sampleRate: session.audio.outputSampleRateHz });
+    await Promise.all([
+      inputCtxRef.current.resume?.(),
+      outputCtxRef.current.resume?.(),
+    ].filter(Boolean)).catch((e) => console.warn('[talk:google] audioContext resume failed:', e?.message ?? e));
 
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
