@@ -23,6 +23,10 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
   const [showSettings, setShowSettings] = useState(false);
   const [deletingId,   setDeletingId]   = useState(null);
   const [input,        setInput]        = useState('');
+  // Mobile-only: sidebar (threads/sessions) is hidden by default and
+  // surfaced via the hamburger button in ChatHeader. On desktop this state
+  // is ignored — CSS keeps the sidebar permanently visible at ≥ 720px.
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Live slash-command catalog from the gateway (falls back to static).
   const { commands: slashCatalog } = useGatewayCommands({
@@ -145,16 +149,23 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingJoinKey, gateway.status]);
 
+  // Auto-close the mobile drawer whenever the user picks a thread or
+  // creates a new one — better UX than requiring a second tap to dismiss.
+  const closeMobileSidebar = () => setMobileSidebarOpen(false);
+
   return (
-    <div className="app-row">
+    <div className={`app-row${mobileSidebarOpen ? ' app-row--sidebar-open' : ''}`}>
+      {mobileSidebarOpen && (
+        <div className="sidebar-backdrop" onClick={closeMobileSidebar} />
+      )}
       <Sidebar
         tab={tab}
         setTab={setTab}
         threads={threads}
         activeId={activeId}
         activeSessionKey={activeThread?.sessionKey ?? null}
-        onSwitchThread={threadOps.switchThread}
-        onNewThread={() => threadOps.newThread()}
+        onSwitchThread={(id) => { threadOps.switchThread(id); closeMobileSidebar(); }}
+        onNewThread={() => { threadOps.newThread(); closeMobileSidebar(); }}
         onRequestDelete={setDeletingId}
         wsStatus={gateway.status}
         sessions={gateway.sessions}
@@ -170,6 +181,7 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
           refreshing={activeThread ? gateway.loadingHistory.has(activeThread.id) : false}
           onToggleSettings={() => setShowSettings((s) => !s)}
           settingsOpen={showSettings}
+          onToggleSidebar={() => setMobileSidebarOpen((s) => !s)}
         />
 
         <Messages

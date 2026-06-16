@@ -131,11 +131,12 @@ body {
   background: var(--bg);
   color: var(--text);
   height: 100vh;
+  height: 100dvh; /* mobile: collapses with URL bar so the input never hides */
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
-#root { height: 100vh; }
+#root { height: 100vh; height: 100dvh; }
 
 button { cursor: pointer; font-family: inherit; border: none; background: none; }
 input, textarea { font-family: inherit; color: inherit; }
@@ -145,6 +146,7 @@ input, textarea { font-family: inherit; color: inherit; }
   display: flex;
   flex-direction: row;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg);
   overflow: hidden;
 }
@@ -475,6 +477,9 @@ input, textarea { font-family: inherit; color: inherit; }
   color: var(--text-muted);
   transition: background 0.15s, color 0.15s;
 }
+
+/* Hamburger lives in ChatHeader; hidden on desktop, shown on mobile. */
+.chat-header-menu { display: none; }
 .icon-btn:hover { background: var(--bg-raised); color: var(--text); }
 .icon-btn.active { background: var(--accent-glow); color: var(--accent-light); }
 
@@ -3638,15 +3643,44 @@ input, textarea { font-family: inherit; color: inherit; }
     flex-direction: row;
   }
 
-  .app-row { flex-direction: column; height: auto; flex: 1; min-height: 0; }
+  .app-row { flex-direction: column; height: auto; flex: 1; min-height: 0; position: relative; }
+  /* Sidebar becomes a left-drawer on phones. Hidden by default, slides
+     in when ChatHeader's hamburger toggles `.app-row--sidebar-open`. */
   .sidebar {
-    width: 100%;
-    height: auto;
-    max-height: 240px;
-    border-right: none;
-    border-bottom: 1px solid var(--border-soft);
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(86vw, 320px);
+    max-height: none;
+    height: 100dvh;
+    border-right: 1px solid var(--border-soft);
+    border-bottom: none;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease-out;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
   }
+  .app-row--sidebar-open .sidebar { transform: translateX(0); }
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 150;
+    animation: fade-in 0.15s ease-out;
+  }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
   .workspace { min-height: 0; flex: 1; }
+
+  /* Hamburger appears only on phones (hidden by default in ChatHeader). */
+  .chat-header-menu { display: inline-flex !important; }
+  /* Session-key badge eats too much width on phones — hide it. */
+  .session-badge { display: none; }
+
+  /* iOS-safe bottom padding so the home-indicator doesn't cover the input. */
+  .input-area {
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
 
   .settings {
     position: fixed;

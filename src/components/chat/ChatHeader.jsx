@@ -2,12 +2,13 @@
 // and action buttons for refresh-history + settings.
 
 import { useState } from 'react';
-import { RefreshCw, Settings as SettingsIcon } from 'lucide-react';
+import { Menu, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
 
 export default function ChatHeader({
   thread, onRename,
   onRefreshHistory, refreshing,
   onToggleSettings, settingsOpen,
+  onToggleSidebar,
 }) {
   const [editing, setEditing] = useState(false);
   const title = thread?.title || 'New conversation';
@@ -21,6 +22,16 @@ export default function ChatHeader({
   return (
     <div className="chat-header">
       <div className="chat-header-left">
+        {onToggleSidebar && (
+          <button
+            className="icon-btn chat-header-menu"
+            onClick={onToggleSidebar}
+            title="Open threads"
+            aria-label="Open threads panel"
+          >
+            <Menu size={18} />
+          </button>
+        )}
         {editing && thread ? (
           <input
             className="title-edit"
