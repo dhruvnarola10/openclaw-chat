@@ -185,7 +185,24 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
   }, [gateway]);
 
   const startWebRtc = useCallback(async (session) => {
-    const pc = new RTCPeerConnection();
+    // STUN servers are mandatory for any browser behind NAT (i.e. every
+    // phone, every laptop on home/office WiFi, every cellular client). The
+    // default `new RTCPeerConnection()` only gathers host candidates —
+    // private IPs the OpenAI Realtime edge can't possibly reach.
+    //
+    // Symptom of missing STUN: the SDP-over-HTTPS handshake succeeds, the
+    // data channel opens (so the UI flips to "listening"), but the RTP
+    // audio path never reaches connected → user hears silence and the model
+    // never receives mic audio.
+    //
+    // The gateway may also supply ICE servers via the session payload
+    // (turn server tokens etc); merge anything it sent with our defaults.
+    const iceServers = [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun.l.google.com:5349'] },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      ...(Array.isArray(session.iceServers) ? session.iceServers : []),
+    ];
+    const pc = new RTCPeerConnection({ iceServers });
     pcRef.current = pc;
 
     const audioEl = document.createElement('audio');
@@ -195,9 +212,24 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     audioElRef.current = audioEl;
 
     pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; };
+
+    // Watch the ICE / connection state so we can SURFACE the failure
+    // instead of staying silently in "listening" forever. Most NAT-induced
+    // failures show up here as `iceConnectionState === 'failed'`.
+    pc.oniceconnectionstatechange = () => {
+      console.log('[talk:webrtc] iceConnectionState =', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        setError('Voice connection failed (NAT/firewall blocked the audio path). Try a different network or VPN.');
+        setState('idle');
+      }
+    };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        setError('WebRTC connection lost.');
+      console.log('[talk:webrtc] connectionState =', pc.connectionState);
+      if (pc.connectionState === 'failed') {
+        setError('Voice connection failed. If you keep seeing this on mobile or restricted networks, the gateway needs to supply TURN servers.');
+        setState('idle');
+      } else if (pc.connectionState === 'disconnected') {
+        setError('Voice connection lost.');
       }
     };
 
