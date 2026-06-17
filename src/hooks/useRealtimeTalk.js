@@ -195,14 +195,45 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     // audio path never reaches connected → user hears silence and the model
     // never receives mic audio.
     //
-    // The gateway may also supply ICE servers via the session payload
-    // (turn server tokens etc); merge anything it sent with our defaults.
-    const iceServers = [
+    // ── ICE servers ──────────────────────────────────────────────────────
+    // STUN gets us through normal NAT. TURN is required for symmetric NAT
+    // (most cellular, some corporate WiFi, double-NAT setups). Without it,
+    // mobile users on cellular usually see `iceConnectionState=failed`.
+    //
+    // Sources, merged in priority order:
+    //   1. App-level env vars (single TURN URL or comma-separated list)
+    //      VITE_TURN_URL       — turn:turn.example.com:3478?transport=udp
+    //      VITE_TURN_USERNAME  — credentials issued by the TURN provider
+    //      VITE_TURN_PASSWORD
+    //   2. Public STUN servers (free).
+    //   3. ICE servers the OpenClaw gateway minted in talk.client.create —
+    //      if your gateway is configured with TURN credentials they end up
+    //      here automatically.
+    const envTurnUrls = (import.meta.env.VITE_TURN_URL ?? '').trim();
+    const envTurnUser = (import.meta.env.VITE_TURN_USERNAME ?? '').trim();
+    const envTurnPass = (import.meta.env.VITE_TURN_PASSWORD ?? '').trim();
+    const iceServers = [];
+    if (envTurnUrls) {
+      iceServers.push({
+        urls: envTurnUrls.split(',').map((u) => u.trim()).filter(Boolean),
+        ...(envTurnUser ? { username: envTurnUser } : {}),
+        ...(envTurnPass ? { credential: envTurnPass } : {}),
+      });
+    }
+    iceServers.push(
       { urls: ['stun:stun.l.google.com:19302', 'stun:stun.l.google.com:5349'] },
       { urls: 'stun:stun.cloudflare.com:3478' },
-      ...(Array.isArray(session.iceServers) ? session.iceServers : []),
-    ];
-    const pc = new RTCPeerConnection({ iceServers });
+    );
+    if (Array.isArray(session.iceServers)) iceServers.push(...session.iceServers);
+    console.log('[talk:webrtc] iceServers:', iceServers.map((s) => s.urls));
+
+    const pc = new RTCPeerConnection({
+      iceServers,
+      // Force iceTransportPolicy=relay only when we have TURN AND the
+      // gateway hints `forceRelay:true`. Otherwise let the browser pick the
+      // fastest path (host → srflx → relay).
+      iceTransportPolicy: session.forceRelay && envTurnUrls ? 'relay' : 'all',
+    });
     pcRef.current = pc;
 
     // Re-use the <audio> element start() created in the user-gesture chain.
