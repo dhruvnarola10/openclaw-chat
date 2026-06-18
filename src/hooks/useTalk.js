@@ -19,6 +19,14 @@ const SR = typeof window !== 'undefined'
   : null;
 const SS = typeof window !== 'undefined' ? window.speechSynthesis : null;
 
+// On mobile, `continuous = true` is buggy (Android re-reports growing finals
+// and restarts mid-utterance → duplicated transcripts). `continuous = false`
+// makes the recogniser capture ONE clean utterance per session and end —
+// no restart-mid-sentence, no overlap, no duplication. We send on that
+// session's end. Desktop keeps continuous mode (works fine there).
+const IS_MOBILE = typeof navigator !== 'undefined' &&
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
+
 const SILENCE_HOLD_MS = 1500;   // ms of inactivity after a final result → end-of-turn
 const RESTART_DELAY   = 200;    // small gap before re-arming SR
 
@@ -47,6 +55,41 @@ function loadVoices() {
   SS.onvoiceschanged = pick;
 }
 loadVoices();
+
+// Merge two transcript fragments, removing the overlap where the tail of
+// `a` repeats the head of `b`. Android restarts the recogniser mid-utterance
+// and the new session re-hears the same audio, producing phrase-level
+// duplication ("hello can you" + "can you hear me" → "hello can you hear me").
+function mergeOverlap(a, b) {
+  const A = (a || '').trim();
+  const B = (b || '').trim();
+  if (!A) return B;
+  if (!B) return A;
+  const aw = A.split(/\s+/);
+  const bw = B.split(/\s+/);
+  const max = Math.min(aw.length, bw.length);
+  let overlap = 0;
+  for (let k = max; k > 0; k--) {
+    if (aw.slice(-k).join(' ').toLowerCase() === bw.slice(0, k).join(' ').toLowerCase()) {
+      overlap = k;
+      break;
+    }
+  }
+  return [...aw, ...bw.slice(overlap)].join(' ');
+}
+
+// Collapse immediately-repeated words ("can can you you" → "can you") as a
+// final safety net for any duplication the overlap-merge didn't catch.
+function dedupeRepeats(text) {
+  const words = (text || '').trim().split(/\s+/);
+  const out = [];
+  for (const w of words) {
+    if (out.length === 0 || out[out.length - 1].toLowerCase() !== w.toLowerCase()) {
+      out.push(w);
+    }
+  }
+  return out.join(' ');
+}
 
 function stripMarkdown(md) {
   return (md ?? '')
@@ -88,7 +131,8 @@ export function useTalk({ onTranscript }) {
   }, []);
 
   const recRef          = useRef(null);
-  const finalRef        = useRef('');     // accumulated final transcript for current turn
+  const committedRef    = useRef('');     // final transcript from ENDED sessions this turn
+  const finalRef        = useRef('');     // final transcript of the CURRENT recogniser session
   const liveRef         = useRef('');     // current interim text
   const activeRef       = useRef(false);  // are we in talk mode (true while loop runs)
   const sentRef         = useRef(false);  // did we already send this turn?
@@ -105,12 +149,17 @@ export function useTalk({ onTranscript }) {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
       if (sentRef.current || !activeRef.current) { log('silence: skip (already sent / inactive)'); return; }
-      const spoken = finalRef.current.trim() || liveRef.current.trim();
+      // Combine all sources: committed (prior sessions) + current session
+      // final + live interim, overlap-merged, then collapse repeats.
+      let spoken = mergeOverlap(committedRef.current, finalRef.current);
+      spoken = mergeOverlap(spoken, liveRef.current);
+      spoken = dedupeRepeats(spoken).trim();
       if (!spoken) { log('silence: no transcript to send'); return; }
 
       sentRef.current = true;
       setState('thinking');
       setUserInterim('');
+      committedRef.current = '';
       finalRef.current = '';
       liveRef.current  = '';
 
@@ -141,10 +190,11 @@ export function useTalk({ onTranscript }) {
     sentRef.current = false;
     setAssistantSpeaking('');
     // Keep showing whatever we've captured so far across the restart.
-    if (finalRef.current.trim()) setUserInterim(finalRef.current.trim());
+    const carried = mergeOverlap(committedRef.current, finalRef.current);
+    if (carried) setUserInterim(carried);
 
     const rec = new SR();
-    rec.continuous      = true;     // keep listening through pauses
+    rec.continuous      = !IS_MOBILE;  // false on mobile → clean single-utterance capture
     rec.interimResults  = true;
     rec.lang            = 'en-US';
     rec.maxAlternatives = 1;
@@ -152,22 +202,29 @@ export function useTalk({ onTranscript }) {
     rec.onstart = () => { log('SR onstart → listening'); setState('listening'); };
 
     rec.onresult = (e) => {
+      // Rebuild this session's transcript FRESH from the full results list
+      // every event (index 0, not resultIndex). Android Chrome re-reports
+      // the same growing final result on each event; the old `+=` approach
+      // accumulated those duplicates ("can can can you"). Rebuilding avoids
+      // it because we replace rather than append.
+      let finalText = '';
       let live = '';
-      // Iterate from resultIndex so we only consume new chunks.
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) finalRef.current += (r[0].transcript || '') + ' ';
-        else           live            += r[0].transcript || '';
+        if (r.isFinal) finalText += (r[0].transcript || '') + ' ';
+        else           live      += r[0].transcript || '';
       }
-      liveRef.current = live;
-      const shown = (finalRef.current + ' ' + live).trim();
+      finalRef.current = finalText.trim();
+      liveRef.current  = live.trim();
+
+      // Display = previously-committed sessions + this session + live interim,
+      // overlap-merged so cross-restart repeats collapse.
+      const merged = mergeOverlap(committedRef.current, finalRef.current);
+      const shown  = mergeOverlap(merged, liveRef.current);
       setUserInterim(shown);
       if (shown) log(`onresult "${shown.slice(0, 40)}"`);
 
-      // Re-arm the silence timer on every transcript update.
-      if (finalRef.current.trim() || live.trim()) {
-        armSilenceTimer();
-      }
+      if (finalRef.current || liveRef.current) armSilenceTimer();
     };
 
     rec.onerror = (e) => {
@@ -188,6 +245,34 @@ export function useTalk({ onTranscript }) {
       log('SR onend');
       if (sentRef.current) return;          // we already sent this turn
       if (!activeRef.current) return;       // user stopped talk mode
+
+      if (IS_MOBILE) {
+        // continuous=false: this session captured one complete utterance.
+        // Its end IS the end-of-turn. Send the clean final transcript — no
+        // accumulation across sessions, so no duplication to clean up.
+        const spoken = (finalRef.current || liveRef.current).trim();
+        if (spoken) {
+          sentRef.current = true;
+          clearTimeout(silenceTimerRef.current);
+          setState('thinking');
+          setUserInterim('');
+          finalRef.current = '';
+          liveRef.current  = '';
+          log(`onend send (mobile) → "${spoken.slice(0, 50)}"`);
+          onTranscript(spoken);
+          return;                           // speak()'s done() restarts listening
+        }
+        // No speech captured (just silence) — keep listening.
+        restartRef.current = setTimeout(startListening, RESTART_DELAY);
+        return;
+      }
+
+      // Desktop (continuous=true): commit this session's text with overlap-
+      // merge and restart; the silence timer sends after a pause.
+      if (finalRef.current) {
+        committedRef.current = mergeOverlap(committedRef.current, finalRef.current);
+        finalRef.current = '';
+      }
       restartRef.current = setTimeout(startListening, RESTART_DELAY);
     };
 
@@ -248,6 +333,7 @@ export function useTalk({ onTranscript }) {
         // Fresh turn after the reply — clear buffers (startListening no
         // longer does, so it can preserve transcript across mid-turn
         // Android restarts).
+        committedRef.current = '';
         finalRef.current = '';
         liveRef.current  = '';
         sentRef.current  = false;
@@ -279,6 +365,9 @@ export function useTalk({ onTranscript }) {
       setState('idle');
       setUserInterim('');
       setAssistantSpeaking('');
+      committedRef.current = '';
+      finalRef.current = '';
+      liveRef.current  = '';
       sentRef.current = false;
       return;
     }
@@ -295,6 +384,7 @@ export function useTalk({ onTranscript }) {
     setTalkActive(true);
     setDebugLog([]);
     // Fresh turn — clear any stale transcript from a previous session.
+    committedRef.current = '';
     finalRef.current = '';
     liveRef.current  = '';
     sentRef.current  = false;
