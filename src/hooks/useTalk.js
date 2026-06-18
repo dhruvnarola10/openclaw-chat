@@ -131,11 +131,17 @@ export function useTalk({ onTranscript }) {
       recRef.current = null;
     }
 
-    finalRef.current = '';
-    liveRef.current  = '';
-    sentRef.current  = false;
-    setUserInterim('');
+    // IMPORTANT: do NOT reset finalRef/liveRef here. On Android Chrome the
+    // recogniser ignores `continuous` and auto-ends every few seconds, so
+    // `onend` restarts us mid-turn. Wiping the buffer on each restart
+    // destroyed the captured transcript before the silence timer could
+    // send it — which is exactly why voice "listened but never answered"
+    // on Android. The buffers are cleared after a successful send instead
+    // (see armSilenceTimer) and on a genuine fresh turn (see beginTurn()).
+    sentRef.current = false;
     setAssistantSpeaking('');
+    // Keep showing whatever we've captured so far across the restart.
+    if (finalRef.current.trim()) setUserInterim(finalRef.current.trim());
 
     const rec = new SR();
     rec.continuous      = true;     // keep listening through pauses
@@ -154,7 +160,9 @@ export function useTalk({ onTranscript }) {
         else           live            += r[0].transcript || '';
       }
       liveRef.current = live;
-      setUserInterim((finalRef.current + ' ' + live).trim());
+      const shown = (finalRef.current + ' ' + live).trim();
+      setUserInterim(shown);
+      if (shown) log(`onresult "${shown.slice(0, 40)}"`);
 
       // Re-arm the silence timer on every transcript update.
       if (finalRef.current.trim() || live.trim()) {
@@ -172,11 +180,14 @@ export function useTalk({ onTranscript }) {
       setState('idle');
     };
 
-    // Continuous mode auto-stops after ~60s of silence in Chrome — restart
-    // if we're still in talk mode and haven't sent yet.
+    // Android Chrome ends the recogniser every few seconds (it ignores
+    // `continuous`). We restart to keep listening — BUT if a long silence
+    // has already elapsed and we have transcript, the silence timer will
+    // send it; we just keep the buffer alive across the restart.
     rec.onend = () => {
-      if (sentRef.current) return;          // we stopped on purpose
-      if (!activeRef.current) return;
+      log('SR onend');
+      if (sentRef.current) return;          // we already sent this turn
+      if (!activeRef.current) return;       // user stopped talk mode
       restartRef.current = setTimeout(startListening, RESTART_DELAY);
     };
 
@@ -234,7 +245,13 @@ export function useTalk({ onTranscript }) {
       clearInterval(keepAliveRef.current);
       setAssistantSpeaking('');
       if (activeRef.current) {
-        // Loop back — small delay so the user can perceive the pause naturally.
+        // Fresh turn after the reply — clear buffers (startListening no
+        // longer does, so it can preserve transcript across mid-turn
+        // Android restarts).
+        finalRef.current = '';
+        liveRef.current  = '';
+        sentRef.current  = false;
+        setUserInterim('');
         restartRef.current = setTimeout(startListening, 250);
       } else {
         setState('idle');
@@ -277,6 +294,11 @@ export function useTalk({ onTranscript }) {
     activeRef.current = true;
     setTalkActive(true);
     setDebugLog([]);
+    // Fresh turn — clear any stale transcript from a previous session.
+    finalRef.current = '';
+    liveRef.current  = '';
+    sentRef.current  = false;
+    setUserInterim('');
     log('starting listen loop…');
     restartRef.current = setTimeout(startListening, 50);
   }, [talkActive, supported, startListening, log]);
