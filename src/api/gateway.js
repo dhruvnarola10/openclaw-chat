@@ -152,7 +152,11 @@ export class Gateway {
     this.send('sessions.subscribe');
     this.send('models.list');
     this.lastRx = Date.now();
-    this.pingTimer = setInterval(() => this.send('ping'), PING_INTERVAL_MS);
+    // Keep-alive. OpenClaw has NO `ping` method — sending one spams its log
+    // with `INVALID_REQUEST: unknown method: ping`. Use `sessions.list`,
+    // which is a real, cheap method we already rely on. Its response feeds
+    // the stale-link detector below (every inbound frame updates lastRx).
+    this.pingTimer = setInterval(() => this.send('sessions.list'), PING_INTERVAL_MS);
     // Stale-link detector: if pings stop being acked / nothing arrives,
     // tear the socket down so onclose kicks the reconnect loop. WebSocket
     // doesn't surface a half-open TCP state on its own.
