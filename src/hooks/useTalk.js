@@ -202,11 +202,24 @@ export function useTalk({ onTranscript }) {
     rec.onstart = () => { log('SR onstart → listening'); setState('listening'); };
 
     rec.onresult = (e) => {
-      // Rebuild this session's transcript FRESH from the full results list
-      // every event (index 0, not resultIndex). Android Chrome re-reports
-      // the same growing final result on each event; the old `+=` approach
-      // accumulated those duplicates ("can can can you"). Rebuilding avoids
-      // it because we replace rather than append.
+      if (IS_MOBILE) {
+        // Android (this device) reports CUMULATIVE results: each entry in
+        // e.results is a longer prefix of the same sentence
+        // ("can" / "can you" / "can you able"...). Concatenating them gave
+        // the duplicated mess. The LAST entry is always the most complete
+        // transcript — use it directly, no concatenation, no dedupe needed.
+        const last = e.results[e.results.length - 1];
+        const t = (last?.[0]?.transcript || '').trim();
+        if (last?.isFinal) { finalRef.current = t; liveRef.current = ''; }
+        else               { liveRef.current  = t; }
+        const shown = (finalRef.current || liveRef.current).trim();
+        setUserInterim(shown);
+        if (shown) { log(`onresult "${shown.slice(0, 40)}"`); armSilenceTimer(); }
+        return;
+      }
+
+      // Desktop (continuous=true): accumulate final segments across the
+      // session; rebuild fresh each event to avoid the re-report dup.
       let finalText = '';
       let live = '';
       for (let i = 0; i < e.results.length; i++) {
@@ -216,14 +229,10 @@ export function useTalk({ onTranscript }) {
       }
       finalRef.current = finalText.trim();
       liveRef.current  = live.trim();
-
-      // Display = previously-committed sessions + this session + live interim,
-      // overlap-merged so cross-restart repeats collapse.
       const merged = mergeOverlap(committedRef.current, finalRef.current);
       const shown  = mergeOverlap(merged, liveRef.current);
       setUserInterim(shown);
       if (shown) log(`onresult "${shown.slice(0, 40)}"`);
-
       if (finalRef.current || liveRef.current) armSilenceTimer();
     };
 
