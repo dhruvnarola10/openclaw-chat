@@ -75,16 +75,49 @@ export function useChat({ apiUrl, token, agentId, model, stream, gateway, thread
     setLoading(true);
 
     const useWs = gateway?.status === 'on' && !!gateway?.subscribeToChat;
+
+    // OpenClaw's embedded runner sometimes fails a turn with a transient
+    // race — "session file changed while embedded prompt lock was released"
+    // / EmbeddedAttemptSessionTakeoverError. It happens when an internal
+    // write (compaction, memory sync, maintenance) touches the session
+    // JSONL while the prompt lock is briefly released. It's NOT a real
+    // failure — a retry almost always succeeds. Detect it and retry a
+    // couple times with a short backoff instead of surfacing a scary error.
+    const isTransientSessionRace = (msg) =>
+      typeof msg === 'string' && (
+        /session file changed while embedded prompt lock/i.test(msg) ||
+        /EmbeddedAttemptSessionTakeoverError/i.test(msg) ||
+        /session takeover/i.test(msg)
+      );
+
+    const runOnce = () => (useWs && attachments.length === 0)
+      ? sendViaWs({ gateway, sessionKey, threadId, text, model, threadOps, wsActiveRef })
+      : sendViaHttp({ apiUrl, token, agentId, sessionKey, threadId, text, attachments, model, stream, threadOps, abortRef });
+
+    const MAX_RETRIES = 3;
     try {
-      if (useWs && attachments.length === 0) {
-        await sendViaWs({
-          gateway, sessionKey, threadId, text, model, threadOps, wsActiveRef,
-        });
-      } else {
-        await sendViaHttp({
-          apiUrl, token, agentId, sessionKey, threadId, text, attachments,
-          model, stream, threadOps, abortRef,
-        });
+      let attempt = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          await runOnce();
+          break;
+        } catch (err) {
+          if (err?.name === 'AbortError') throw err;
+          if (isTransientSessionRace(err?.message) && attempt < MAX_RETRIES) {
+            attempt += 1;
+            console.warn(`[chat] transient session race — retry ${attempt}/${MAX_RETRIES}`);
+            // Reset the assistant bubble back to a clean "waiting" state and
+            // wait a beat for OpenClaw's internal write to settle.
+            threadOps.patchLast(threadId, (m) => ({
+              ...m, content: '', toolCalls: undefined, streaming: true,
+              thinkingStreaming: false, waiting: true, isError: false,
+            }));
+            await new Promise((r) => setTimeout(r, 600 * attempt));
+            continue;
+          }
+          throw err;
+        }
       }
     } catch (err) {
       if (err?.name === 'AbortError') {
@@ -485,6 +518,18 @@ async function fetchSessionUsage(gateway, sessionKey) {
 // token" advice when the actual problem is a 404 from a model provider.
 function formatChatError(message, model) {
   const text = (message || '').toLowerCase();
+
+  // OpenClaw embedded-runner session race (known upstream bug). If it
+  // survived our auto-retries, explain it plainly rather than dumping the
+  // raw "embedded prompt lock" jargon.
+  if (/session file changed while embedded prompt lock|embeddedattemptsessiontakeover|session takeover/i.test(message || '')) {
+    return `The agent hit a temporary session conflict and couldn't complete this turn.\n\n` +
+           `This is a known OpenClaw issue where a background write (compaction / memory sync) ` +
+           `touches the session file mid-reply. It usually clears on its own.\n\n` +
+           `Try:\n` +
+           `• Send the message again\n` +
+           `• If it keeps happening, start a new chat (the session file may be busy)`;
+  }
 
   // Provider-side errors — model not in upstream catalog, region issues, etc.
   if (/\b(404|not[\s-]?found|unknown[\s-]?model|model.*not.*exist|invalid[\s-]?model)\b/.test(text)
