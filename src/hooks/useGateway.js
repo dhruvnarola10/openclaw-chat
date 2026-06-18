@@ -166,11 +166,16 @@ export function useGateway({ tokenRef, onModelsList }) {
     [],
   );
 
+  // Live readiness check — reads the underlying socket state directly, so
+  // callers can poll it in a loop (unlike `status`, which is a React state
+  // snapshot frozen at render time).
+  const isReady = useCallback(() => gatewayRef.current?.isReady() ?? false, []);
+
   return {
     status, sessions, events, loadingHistory,
     fetchHistory, reconnect, disconnect, request,
     restartPreflight, restartGateway,
-    subscribeToChat,
+    subscribeToChat, isReady,
   };
 }
 

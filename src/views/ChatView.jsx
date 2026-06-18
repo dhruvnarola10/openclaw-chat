@@ -202,7 +202,7 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
           talk={talk}
         />
         {(talk.talkActive || (talk.debugLog?.length ?? 0) > 0) && talk.debugLog && (
-          <VoiceDebugOverlay log={talk.debugLog} state={talk.state} error={talk.error} transport={talk.transportInUse} />
+          <VoiceDebugOverlay log={talk.debugLog} state={talk.state} error={talk.error} transport={talk.transportInUse} gatewayStatus={gateway.status} />
         )}
       </div>
 
@@ -260,9 +260,10 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
 // Mobile-friendly voice debug. Floats at the bottom of the workspace
 // while a talk session is active OR has anything logged. Tap the header
 // to collapse/expand. Long-press the log to copy.
-function VoiceDebugOverlay({ log, state, error, transport }) {
+function VoiceDebugOverlay({ log, state, error, transport, gatewayStatus }) {
   const [open, setOpen] = useState(true);
   const text = (log ?? []).join('\n');
+  const gwDot = gatewayStatus === 'on' ? '🟢' : '🔴';
   return (
     <div style={{
       position: 'sticky',
@@ -284,7 +285,7 @@ function VoiceDebugOverlay({ log, state, error, transport }) {
         onClick={() => setOpen((s) => !s)}
         style={{ width: '100%', padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', background: 'var(--bg-raised)', border: 'none', cursor: 'pointer' }}
       >
-        🎤 talk: <strong>{state}</strong>{transport ? ` · ${transport}` : ''}{error ? ` · ⚠ ${error.slice(0, 40)}` : ''}  {open ? '▾' : '▸'}
+        🎤 talk: <strong>{state}</strong>{transport ? ` · ${transport}` : ''} · gw {gwDot}{gatewayStatus}{error ? ` · ⚠ ${error.slice(0, 40)}` : ''}  {open ? '▾' : '▸'}
       </button>
       {open && (
         <pre

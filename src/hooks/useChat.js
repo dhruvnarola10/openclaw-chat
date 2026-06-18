@@ -74,7 +74,23 @@ export function useChat({ apiUrl, token, agentId, model, stream, gateway, thread
 
     setLoading(true);
 
-    const useWs = gateway?.status === 'on' && !!gateway?.subscribeToChat;
+    // If the WS gateway isn't connected, the chat falls back to the HTTP
+    // OpenResponses endpoint — which on flaky mobile networks frequently
+    // dies with "Failed to fetch". Prefer the WS path: if it's not ready
+    // but the gateway exists, kick a reconnect and wait briefly for it to
+    // come up before we resort to HTTP.
+    const wsLive = () => (typeof gateway?.isReady === 'function' ? gateway.isReady() : gateway?.status === 'on');
+    if (!wsLive() && gateway?.reconnect && gateway?.subscribeToChat) {
+      console.warn('[chat] gateway WS not ready — attempting reconnect before send');
+      try { gateway.reconnect(); } catch { /* ignore */ }
+      const deadline = Date.now() + 4000;
+      while (!wsLive() && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      console.warn(`[chat] after reconnect wait: wsLive=${wsLive()}`);
+    }
+
+    const useWs = wsLive() && !!gateway?.subscribeToChat;
 
     // OpenClaw's embedded runner sometimes fails a turn with a transient
     // race — "session file changed while embedded prompt lock was released"
