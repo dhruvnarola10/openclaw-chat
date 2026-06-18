@@ -78,6 +78,14 @@ export function useTalk({ onTranscript }) {
   const [userInterim, setUserInterim]             = useState('');
   const [assistantSpeaking, setAssistantSpeaking] = useState('');
   const [error, setError]                         = useState('');
+  // On-screen debug log — same overlay as useRealtimeTalk uses, so users
+  // can screenshot what happened without remote-inspecting the phone.
+  const [debugLog, setDebugLog]                   = useState([]);
+  const log = useCallback((line) => {
+    const stamp = new Date().toISOString().slice(11, 19);
+    setDebugLog((prev) => [...prev.slice(-24), `${stamp} ${line}`]);
+    console.log('[webspeech]', line);
+  }, []);
 
   const recRef          = useRef(null);
   const finalRef        = useRef('');     // accumulated final transcript for current turn
@@ -96,9 +104,9 @@ export function useTalk({ onTranscript }) {
   const armSilenceTimer = useCallback(() => {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
-      if (sentRef.current || !activeRef.current) return;
+      if (sentRef.current || !activeRef.current) { log('silence: skip (already sent / inactive)'); return; }
       const spoken = finalRef.current.trim() || liveRef.current.trim();
-      if (!spoken) return;
+      if (!spoken) { log('silence: no transcript to send'); return; }
 
       sentRef.current = true;
       setState('thinking');
@@ -106,13 +114,11 @@ export function useTalk({ onTranscript }) {
       finalRef.current = '';
       liveRef.current  = '';
 
-      // Stop the recogniser while the model thinks; we'll restart it
-      // in `speak()`'s onend, after the assistant has finished speaking.
+      log(`silence fired → sending "${spoken.slice(0, 50)}"`);
       try { recRef.current?.stop(); } catch { /* ignore */ }
-
       onTranscript(spoken);
     }, SILENCE_HOLD_MS);
-  }, [onTranscript]);
+  }, [onTranscript, log]);
 
   // ── STT (continuous) ───────────────────────────────────────────────
 
@@ -137,7 +143,7 @@ export function useTalk({ onTranscript }) {
     rec.lang            = 'en-US';
     rec.maxAlternatives = 1;
 
-    rec.onstart = () => setState('listening');
+    rec.onstart = () => { log('SR onstart → listening'); setState('listening'); };
 
     rec.onresult = (e) => {
       let live = '';
@@ -157,6 +163,7 @@ export function useTalk({ onTranscript }) {
     };
 
     rec.onerror = (e) => {
+      log(`SR onerror: ${e.error}`);
       if (e.error === 'aborted')   return;
       if (e.error === 'no-speech') return;   // continuous mode shouldn't fire this often
       setError(SPEECH_ERRORS[e.error] ?? `Speech error: ${e.error}`);
@@ -175,20 +182,24 @@ export function useTalk({ onTranscript }) {
 
     try {
       rec.start();
+      log('SR.start() called');
       recRef.current = rec;
     } catch (err) {
+      log(`SR.start() threw: ${err?.message ?? err}`);
       // "InvalidStateError: already started" on rapid toggles — wait then retry.
       restartRef.current = setTimeout(startListening, 250);
     }
-  }, [armSilenceTimer]);
+  }, [armSilenceTimer, log]);
 
   // ── TTS — speak the assistant reply, then auto-loop back to listening ──
 
   const speak = useCallback((text) => {
-    if (!activeRef.current) return;
+    log(`speak() called, len=${(text || '').length}, active=${activeRef.current}, hasSS=${!!SS}`);
+    if (!activeRef.current) { log('speak: skip (not active)'); return; }
     clearTimeout(silenceTimerRef.current);
 
     if (!SS || !text) {
+      log('speak: no SS or empty text → restart listen');
       restartRef.current = setTimeout(startListening, 100);
       return;
     }
@@ -197,10 +208,12 @@ export function useTalk({ onTranscript }) {
 
     const cleaned = stripMarkdown(text);
     if (!cleaned) {
+      log('speak: cleaned text empty → restart listen');
       restartRef.current = setTimeout(startListening, 100);
       return;
     }
 
+    log(`speak: SS.speak() "${cleaned.slice(0, 50)}"`);
     setState('speaking');
     setAssistantSpeaking(cleaned);
 
@@ -236,6 +249,7 @@ export function useTalk({ onTranscript }) {
   // ── Toggle the loop ────────────────────────────────────────────────
 
   const toggle = useCallback(() => {
+    log(`toggle ua="${(navigator.userAgent || '').slice(0, 60)}..." SR=${!!SR} SS=${!!SS} active=${talkActive}`);
     if (talkActive) {
       activeRef.current = false;
       setTalkActive(false);
@@ -253,15 +267,19 @@ export function useTalk({ onTranscript }) {
     }
 
     if (!supported) {
-      setError('Talk mode requires Chrome or Edge over HTTPS / localhost.');
+      const reason = !SR ? 'SpeechRecognition API not available' : !SS ? 'speechSynthesis API not available' : 'unknown';
+      log(`unsupported: ${reason}`);
+      setError(`Voice not supported on this browser: ${reason}. Try Chrome on Android, or Safari on iPhone 14+.`);
       return;
     }
 
     setError('');
     activeRef.current = true;
     setTalkActive(true);
+    setDebugLog([]);
+    log('starting listen loop…');
     restartRef.current = setTimeout(startListening, 50);
-  }, [talkActive, supported, startListening]);
+  }, [talkActive, supported, startListening, log]);
 
   // Cleanup on unmount.
   useEffect(() => () => {
@@ -282,5 +300,6 @@ export function useTalk({ onTranscript }) {
     error,
     toggle,
     speak,
+    debugLog,
   };
 }
