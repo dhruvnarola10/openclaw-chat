@@ -92,18 +92,21 @@ export function useChat({ apiUrl, token, agentId, model, stream, gateway, thread
 
     const useWs = wsLive() && !!gateway?.subscribeToChat;
 
-    // OpenClaw's embedded runner sometimes fails a turn with a transient
-    // race — "session file changed while embedded prompt lock was released"
-    // / EmbeddedAttemptSessionTakeoverError. It happens when an internal
-    // write (compaction, memory sync, maintenance) touches the session
-    // JSONL while the prompt lock is briefly released. It's NOT a real
-    // failure — a retry almost always succeeds. Detect it and retry a
-    // couple times with a short backoff instead of surfacing a scary error.
+    // Transient, safe-to-retry failures. These don't indicate a real
+    // problem with the request — a retry almost always succeeds:
+    //   • embedded-runner session race (compaction/memory-sync touches the
+    //     session file mid-prompt → "session file changed…").
+    //   • Ollama stream cut off before its final `done` chunk — common with
+    //     cloud-served models on a flaky upstream connection.
+    // (We deliberately do NOT retry the Codex turn-timeout — that one may
+    //  have already executed real work.)
     const isTransientSessionRace = (msg) =>
       typeof msg === 'string' && (
         /session file changed while embedded prompt lock/i.test(msg) ||
         /EmbeddedAttemptSessionTakeoverError/i.test(msg) ||
-        /session takeover/i.test(msg)
+        /session takeover/i.test(msg) ||
+        /stream ended without a final response/i.test(msg) ||
+        /ollama api stream ended/i.test(msg)
       );
 
     const runOnce = () => (useWs && attachments.length === 0)
@@ -534,6 +537,33 @@ async function fetchSessionUsage(gateway, sessionKey) {
 // token" advice when the actual problem is a 404 from a model provider.
 function formatChatError(message, model) {
   const text = (message || '').toLowerCase();
+
+  // Ollama provider stream ended early (no final `done` chunk). Common with
+  // cloud-served models when the upstream connection blips, the model gets
+  // unloaded mid-turn, or the context window is exceeded. We already auto-
+  // retry this; if it survived the retries, explain the real causes.
+  if (/stream ended without a final response|ollama api stream ended/i.test(message || '')) {
+    return `The model (Ollama) ended its response stream early — it didn't send a completion signal.\n\n` +
+           `Usually transient (the app already retried). If it keeps happening:\n` +
+           `• The model may be running out of memory — try a smaller model\n` +
+           `• The conversation may be too long (context limit) — start a new chat\n` +
+           `• For *-cloud models, the upstream Ollama connection may be unstable — retry shortly`;
+  }
+
+  // OpenClaw Codex app-server turn-completion timeout (known regression in
+  // 2026.5.27). Codex sometimes doesn't emit `turn/completed` after a tool
+  // handoff, so OpenClaw aborts after the idle window. We deliberately do
+  // NOT auto-retry this (unlike the session race) because the agent may
+  // have ALREADY done partial work (ran Bash, created files) — blindly
+  // retrying could repeat side-effects. Explain it honestly instead.
+  if (/turn idle timed out|turn\/completed|codex stopped before confirming/i.test(message || '')) {
+    return `The Codex agent ran past its turn-completion timeout and OpenClaw stopped it.\n\n` +
+           `This is a known OpenClaw bug (Codex app-server doesn't always signal "turn complete" ` +
+           `on long multi-step tasks). Some work may already be done — check the result before resending.\n\n` +
+           `Fixes (server side):\n` +
+           `• Increase plugins.entries.codex.config.appServer.turnCompletionIdleTimeoutMs (e.g. 300000)\n` +
+           `• Or upgrade/pin OpenClaw off 2026.5.27 (this regressed there)`;
+  }
 
   // OpenClaw embedded-runner session race (known upstream bug). If it
   // survived our auto-retries, explain it plainly rather than dumping the

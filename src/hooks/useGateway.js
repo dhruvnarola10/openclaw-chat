@@ -4,6 +4,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Gateway } from '../api/gateway.js';
 import { genId, parseSessionKey } from '../utils/format.js';
+import {
+  attachmentsFromMessageToolArgs,
+  extractAttachmentsFromContent,
+  extractMediaTokens,
+} from '../utils/files.js';
 
 const MAX_EVENTS = 50;
 
@@ -187,21 +192,39 @@ function normalizeHistoryMessage(item) {
 
   let content  = '';
   let thinking = '';
+  let attachments = [];
   if (Array.isArray(m.content)) {
     for (const c of m.content) {
       if (c.type === 'text') content += c.text ?? '';
       else if (c.type === 'thinking' || c.type === 'reasoning')
         thinking += c.thinking ?? c.text ?? '';
     }
+    // Structured image/file parts (Anthropic/OpenAI/OpenClaw shapes).
+    attachments = extractAttachmentsFromContent(m.content);
   } else if (typeof m.content === 'string') {
     content = m.content;
   }
-  if (!content && !thinking) return [];
+
+  // Some history rows carry the message-tool args (with attachments[]).
+  if (m.toolName === 'message' || m.name === 'message') {
+    attachments = attachments.concat(attachmentsFromMessageToolArgs(m.args ?? m.input ?? {}));
+  }
+
+  // Strip inline MEDIA:<path> tokens from the text and turn them into
+  // attachments — same as the live stream does. Without this, a message
+  // generated on another device shows the raw "MEDIA:/home/..." path when
+  // loaded from history here.
+  const med = extractMediaTokens(content);
+  content = med.cleanedText;
+  attachments = attachments.concat(med.attachments);
+
+  if (!content && !thinking && attachments.length === 0) return [];
 
   return [{
     id:       item.id ?? m.id ?? genId(),
     role:     m.role,
     content,
     thinking: thinking || undefined,
+    attachments: attachments.length ? attachments : undefined,
   }];
 }
