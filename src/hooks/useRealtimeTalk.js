@@ -33,6 +33,14 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
   const [error, setError]                         = useState('');
   const [fallback, setFallback]                   = useState(false);
   const [transportInUse, setTransportInUse]       = useState(null);
+  // On-screen log — last N events, so we can debug mobile without a
+  // remote inspector. Surfaced via VoiceDebugOverlay below the chat.
+  const [debugLog, setDebugLog]                   = useState([]);
+  const log = useCallback((line) => {
+    const stamp = new Date().toISOString().slice(11, 19);
+    setDebugLog((prev) => [...prev.slice(-24), `${stamp} ${line}`]);
+    console.log('[talk]', line);
+  }, []);
 
   // WebRTC refs
   const pcRef        = useRef(null);
@@ -67,6 +75,25 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     typeof window !== 'undefined' &&
     (window.isSecureContext === true ||
      ['localhost', '127.0.0.1', '::1'].includes(window.location?.hostname));
+
+  // Force the Web-Speech fallback on phones — WebRTC audio is unreliable
+  // on cellular / mobile NAT and adds infra work (STUN/TURN). The fallback
+  // uses the browser's built-in speech recognition + TTS, routed through
+  // normal `chat.send`. Always works, no provider keys, no NAT issues.
+  //
+  // Desktop keeps the high-quality OpenAI Realtime / Google Live path.
+  // Override with `?talk=realtime` in the URL if you want to force WebRTC
+  // on a phone for testing.
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    const ua = navigator.userAgent || '';
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(ua) ||
+      ('maxTouchPoints' in navigator && navigator.maxTouchPoints > 1 && /Mac/i.test(ua)); // iPad pretending to be Mac
+    if (!isMobile) return;
+    const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
+    if (params.get('talk') === 'realtime') return;
+    setFallback(true);
+  }, []);
 
   // ── Cleanup ─────────────────────────────────────────────────────────────
 
@@ -252,28 +279,24 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     }
 
     pc.ontrack = (e) => {
+      log(`ontrack kind=${e.track.kind}`);
       audioEl.srcObject = e.streams[0];
-      // Explicit play() so the user-gesture chain (button click → start →
-      // ontrack) keeps the autoplay policy happy on iOS. Errors here mean
-      // the browser ignored autoplay anyway — log so we can surface it.
       const p = audioEl.play();
-      if (p && typeof p.catch === 'function') {
-        p.catch((err) => console.warn('[talk:webrtc] audio play() rejected:', err?.message ?? err));
-      }
+      if (p?.then) p.then(() => log('audio play OK')).catch((err) => log(`audio play REJECTED: ${err?.name} ${err?.message}`));
     };
 
     // Watch the ICE / connection state so we can SURFACE the failure
     // instead of staying silently in "listening" forever. Most NAT-induced
     // failures show up here as `iceConnectionState === 'failed'`.
     pc.oniceconnectionstatechange = () => {
-      console.log('[talk:webrtc] iceConnectionState =', pc.iceConnectionState);
+      log(`ice=${pc.iceConnectionState}`);
       if (pc.iceConnectionState === 'failed') {
         setError('Voice connection failed (NAT/firewall blocked the audio path). Try a different network or VPN.');
         setState('idle');
       }
     };
     pc.onconnectionstatechange = () => {
-      console.log('[talk:webrtc] connectionState =', pc.connectionState);
+      log(`pc=${pc.connectionState}`);
       if (pc.connectionState === 'failed') {
         setError('Voice connection failed. If you keep seeing this on mobile or restricted networks, the gateway needs to supply TURN servers.');
         setState('idle');
@@ -474,14 +497,39 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
       inputSrcRef.current  = source;
       inputProcRef.current = proc;
 
+      // iOS Safari ignores the constructor's sampleRate hint — the actual
+      // ictx.sampleRate is whatever the device prefers (typically 48000).
+      // Gemini Live expects 16000 Hz PCM. If the rates differ, downsample
+      // in-thread before sending. Plain nearest-neighbour decimation is
+      // good enough for speech recognition at these rates.
+      const targetRate = session.audio.inputSampleRateHz || 16000;
+      const inputRate  = ictx.sampleRate;
+      const needsDownsample = Math.abs(inputRate - targetRate) > 1;
+      const ratio = inputRate / targetRate;
+      log(`mic rate=${inputRate}Hz → target=${targetRate}Hz ${needsDownsample ? '(downsampling)' : '(passthrough)'}`);
+
       proc.onaudioprocess = (e) => {
         if (ws.readyState !== WebSocket.OPEN) return;
-        const pcm = floatToPcm16(e.inputBuffer.getChannelData(0));
+        let samples = e.inputBuffer.getChannelData(0);
+        if (needsDownsample) {
+          const out = new Float32Array(Math.floor(samples.length / ratio));
+          for (let i = 0; i < out.length; i++) {
+            // Average a small window around the source sample for a little
+            // anti-aliasing. Cheap, no FFT, mono.
+            const src = i * ratio;
+            const a = Math.floor(src);
+            const b = Math.min(a + 1, samples.length - 1);
+            const t = src - a;
+            out[i] = samples[a] * (1 - t) + samples[b] * t;
+          }
+          samples = out;
+        }
+        const pcm = floatToPcm16(samples);
         send({
           realtimeInput: {
             audio: {
               data: bytesToBase64(pcm),
-              mimeType: `audio/pcm;rate=${ictx.sampleRate}`,
+              mimeType: `audio/pcm;rate=${needsDownsample ? targetRate : inputRate}`,
             },
           },
         });
@@ -490,14 +538,16 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
       proc.connect(ictx.destination);
     });
 
+    ws.addEventListener('open',    () => log('ws open'));
     ws.addEventListener('message', (e) => { void handleGoogleLiveMessage(e.data, session); });
-    ws.addEventListener('error',   () => setError('Realtime WebSocket failed'));
-    ws.addEventListener('close',   () => {
+    ws.addEventListener('error',   () => { log('ws error'); setError('Realtime WebSocket failed'); });
+    ws.addEventListener('close',   (ev) => {
+      log(`ws close code=${ev.code} reason=${ev.reason?.slice(0, 40) ?? ''}`);
       if (wsRef.current === ws) {
         // Connection lost mid-talk — surface error if user didn't stop us.
       }
     });
-  }, [handleGoogleLiveMessage]);
+  }, [handleGoogleLiveMessage, log]);
 
   // ── Start / Stop ────────────────────────────────────────────────────────
 
@@ -526,6 +576,8 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     setUserInterim('');
     setAssistantSpeaking('');
     setTransportInUse(null);
+    setDebugLog([]);
+    log(`start() ua="${navigator.userAgent.slice(0, 60)}..."`);
 
     // ── iOS Safari mobile-voice fix ────────────────────────────────────
     // Two gesture-sensitive operations need to happen BEFORE any network
@@ -561,10 +613,13 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
 
     // Pre-acquire mic stream while the gesture is still live.
     try {
+      log('getUserMedia() requesting…');
       streamRef.current = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      log(`getUserMedia() granted, ${streamRef.current.getAudioTracks().length} track(s)`);
     } catch (err) {
+      log(`getUserMedia() FAILED: ${err?.name} ${err?.message}`);
       setError(`Microphone access denied (${err?.name || 'error'}). Check Settings → Safari → Camera & Microphone.`);
       setState('idle');
       setTalkActive(false);
@@ -582,8 +637,11 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
       // `talk.session.create` for older builds.
       let session;
       try {
+        log('gateway.talk.client.create…');
         session = await gateway.request('talk.client.create', { sessionKey });
+        log(`session: transport=${session?.transport} ice=${(session?.iceServers || []).length}`);
       } catch (firstErr) {
+        log(`talk.client.create FAILED: ${firstErr?.message}`);
         try {
           session = await gateway.request('talk.session.create', {
             sessionKey,
@@ -632,7 +690,7 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
       setState('idle');
       setTalkActive(false);
     }
-  }, [supported, gateway, agentId, getSessionKey, startWebRtc, startGoogleLive, cleanup]);
+  }, [supported, gateway, agentId, getSessionKey, startWebRtc, startGoogleLive, cleanup, log]);
 
   const stop = useCallback(() => {
     cleanup();
@@ -674,5 +732,6 @@ export function useRealtimeTalk({ gateway, agentId, getSessionKey }) {
     transportInUse,
     toggle,
     speak,
+    debugLog,
   };
 }

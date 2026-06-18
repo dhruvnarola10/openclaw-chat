@@ -201,6 +201,9 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
           voiceActive={voice.voiceOpen}
           talk={talk}
         />
+        {(talk.talkActive || (talk.debugLog?.length ?? 0) > 0) && talk.debugLog && (
+          <VoiceDebugOverlay log={talk.debugLog} state={talk.state} error={talk.error} transport={talk.transportInUse} />
+        )}
       </div>
 
       {showSettings && (
@@ -249,6 +252,48 @@ export default function ChatView({ config, models, threadOps, gateway, pendingJo
           onStopSpeaking={voice.stopSpeaking}
           onClose={voice.closeVoice}
         />
+      )}
+    </div>
+  );
+}
+
+// Mobile-friendly voice debug. Floats at the bottom of the workspace
+// while a talk session is active OR has anything logged. Tap the header
+// to collapse/expand. Long-press the log to copy.
+function VoiceDebugOverlay({ log, state, error, transport }) {
+  const [open, setOpen] = useState(true);
+  const text = (log ?? []).join('\n');
+  return (
+    <div style={{
+      position: 'sticky',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      zIndex: 50,
+      margin: '4px 8px 8px',
+      borderRadius: 8,
+      border: '1px solid var(--border-soft)',
+      background: 'var(--bg-overlay)',
+      fontSize: 11,
+      fontFamily: 'SF Mono, Consolas, monospace',
+      maxHeight: open ? 200 : 28,
+      overflow: 'hidden',
+      transition: 'max-height 0.15s',
+    }}>
+      <button
+        onClick={() => setOpen((s) => !s)}
+        style={{ width: '100%', padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', background: 'var(--bg-raised)', border: 'none', cursor: 'pointer' }}
+      >
+        🎤 talk: <strong>{state}</strong>{transport ? ` · ${transport}` : ''}{error ? ` · ⚠ ${error.slice(0, 40)}` : ''}  {open ? '▾' : '▸'}
+      </button>
+      {open && (
+        <pre
+          onClick={() => navigator.clipboard?.writeText(text).catch(() => {})}
+          style={{
+            margin: 0, padding: '6px 10px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            color: 'var(--text)', maxHeight: 170, overflowY: 'auto', cursor: 'copy',
+          }}
+        >{text || '(no events yet — tap the speaker button to start)'}</pre>
       )}
     </div>
   );
