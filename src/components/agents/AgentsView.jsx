@@ -8,12 +8,13 @@
 // `kind: "real" | "virtual"`.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Bot, Check, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
 import { api, useApi } from '../../hooks/useApi.js';
 import { useGatewayResource } from '../../hooks/useGatewayResource.js';
 import { parseSessionKey } from '../../utils/format.js';
 import PageHeader from '../common/PageHeader.jsx';
 import EmptyState from '../common/EmptyState.jsx';
+import AgentDetail from './AgentDetail.jsx';
 
 export default function AgentsView({ gateway, config }) {
   const { data, loading, error, refresh } = useApi('/agents');
@@ -21,6 +22,7 @@ export default function AgentsView({ gateway, config }) {
 
   const [creating, setCreating]   = useState(false);
   const [editing,  setEditing]    = useState(null);     // virtual agent row to edit
+  const [viewing,  setViewing]    = useState(null);     // agent row to open settings for
   const [busyId,   setBusyId]     = useState(null);
   const [toast,    setToast]      = useState('');
 
@@ -41,6 +43,21 @@ export default function AgentsView({ gateway, config }) {
 
   const realAgents = items.filter((a) => a.kind !== 'virtual');
   const activeAgentId = config?.agentId;
+
+  // When an agent is selected, show its full settings page instead of the list.
+  if (viewing) {
+    // Re-resolve from the latest list so edits elsewhere reflect immediately.
+    const fresh = items.find((a) => a.id === viewing.id) ?? viewing;
+    return (
+      <AgentDetail
+        agent={fresh}
+        gateway={gateway}
+        activeAgentId={activeAgentId}
+        onSetActive={(id) => config?.setAgentId?.(id)}
+        onBack={() => { setViewing(null); refresh(); }}
+      />
+    );
+  }
 
   const remove = async (a) => {
     const isReal = a.kind === 'real';
@@ -133,10 +150,14 @@ export default function AgentsView({ gateway, config }) {
                     <tr key={a.id} className={isActive ? 'page-row-active' : ''}>
                       <td>
                         <div className="page-stack">
-                          <span className="page-strong">
+                          <button
+                            className="page-strong agent-name-link"
+                            onClick={() => setViewing(a)}
+                            title="Open agent settings"
+                          >
                             {isActive && <Check size={12} style={{ marginRight: 6, color: '#22c55e' }} />}
                             {a.name || a.id}
-                          </span>
+                          </button>
                           {a.description && <span className="page-muted">{a.description}</span>}
                           <code className="page-mono">{a.id}</code>
                         </div>
@@ -162,6 +183,9 @@ export default function AgentsView({ gateway, config }) {
                             <button className="ov-btn" onClick={() => config?.setAgentId?.(a.id)}
                               title="Use this agent for new chats">Use</button>
                           )}
+                          <button className="row-action" onClick={() => setViewing(a)} title="Settings">
+                            <Settings size={12} />
+                          </button>
                           <button className="row-action" onClick={() => setEditing(a)} title="Edit">
                             <Pencil size={12} />
                           </button>

@@ -4711,6 +4711,129 @@ input, textarea { font-family: inherit; color: inherit; }
 }
 
 /* ── Agent create/edit modal ──────────────────────────────── */
+/* ─── Agent settings detail page ──────────────────────────────────── */
+.agent-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.agent-detail-title { display: flex; flex-direction: column; gap: 2px; }
+.agent-detail-title .ov-h1 { margin: 0; }
+
+.agent-detail-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+}
+.agent-detail-tab {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.agent-detail-tab:hover { color: var(--text); }
+.agent-detail-tab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Agent name as a button in the list */
+.agent-name-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.agent-name-link:hover { color: var(--accent); text-decoration: underline; }
+
+/* Overview meta grid */
+.agent-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.agent-meta-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 4px; }
+.agent-meta-value { font-size: 13.5px; color: var(--text); }
+.agent-overview-form { max-width: 460px; }
+.agent-overview-form .ov-label { display: block; margin-bottom: 6px; }
+
+/* Files tab */
+.agent-file-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.agent-file-tab {
+  padding: 5px 11px; font-size: 12px; border-radius: 6px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer;
+}
+.agent-file-tab.is-active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+.agent-file-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.agent-file-editor {
+  width: 100%; min-height: 360px; resize: vertical;
+  background: #141414; border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; color: var(--text);
+  font-family: 'SF Mono','Fira Code',Consolas,monospace; font-size: 13px; line-height: 1.6;
+}
+.agent-file-preview {
+  min-height: 360px; background: var(--bg-overlay); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 18px;
+}
+
+/* Blur the file content until the user explicitly reveals it (privacy —
+   matches OpenClaw's behaviour for IDENTITY/USER/etc). */
+.agent-file-content { position: relative; }
+.agent-file-editor.is-blurred,
+.agent-file-preview.is-blurred {
+  filter: blur(6px);
+  user-select: none;
+  pointer-events: none;
+}
+.agent-file-reveal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  border: none;
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 13.5px;
+  cursor: pointer;
+  z-index: 1;
+}
+.agent-file-reveal:hover { background: rgba(0, 0, 0, 0.28); }
+
+/* Tools tab */
+.agent-tool-group { margin-bottom: 14px; }
+.agent-tool-group-head {
+  display: flex; justify-content: space-between; font-size: 13px; font-weight: 500;
+  color: var(--text); margin-bottom: 8px;
+}
+.agent-tool-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-tool-chip {
+  padding: 3px 9px; border-radius: 6px; font-size: 12px;
+  background: var(--accent-glow); color: var(--accent); border: 1px solid var(--border);
+}
+.agent-tool-chip.is-off { background: var(--bg-raised); color: var(--text-muted); opacity: 0.55; text-decoration: line-through; }
+
+/* Skills / channels / cron rows */
+.agent-skill-list { display: flex; flex-direction: column; gap: 8px; }
+.agent-skill-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 10px;
+  background: var(--bg-overlay);
+}
+.agent-skill-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
 .agent-tabs {
   display: flex;
   gap: 4px;
