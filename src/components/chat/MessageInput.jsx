@@ -2,9 +2,10 @@
 // + multi-modal attachments (click, drag-drop, clipboard paste).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Paperclip, Pause, Radio, Send, Volume2 } from 'lucide-react';
+import { Mic, Paperclip, Pause, Radio, Send, SlidersHorizontal, Volume2 } from 'lucide-react';
 import SlashPopup       from './SlashPopup.jsx';
 import AttachmentList   from './AttachmentList.jsx';
+import VoiceSettings    from '../voice-settings/VoiceSettings.jsx';
 import { useAttachments } from '../../hooks/useAttachments.js';
 import { SUPPORTED_ACCEPT } from '../../utils/files.js';
 
@@ -17,6 +18,7 @@ export default function MessageInput({
   const ref     = useRef(null);
   const fileRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
 
   const att = useAttachments();
 
@@ -154,6 +156,16 @@ export default function MessageInput({
           <div className="input-right">
             {talk?.supported && (
               <button
+                className="voice-btn"
+                onClick={() => setVoiceSettingsOpen(true)}
+                title="Voice settings (ElevenLabs)"
+                disabled={loading}
+              >
+                <SlidersHorizontal size={15} />
+              </button>
+            )}
+            {talk?.supported && (
+              <button
                 className={`talk-btn${talk.talkActive ? ' talk-btn--active' : ''}`}
                 onClick={talk.toggle}
                 title={talk.talkActive ? 'Stop talk' : 'Start Talk'}
@@ -192,6 +204,8 @@ export default function MessageInput({
         Enter to send · Shift+Enter for new line · Drop / paste to attach
         {/* {onOpenVoice && <> · <span className="hint-voice" onClick={onOpenVoice}>🎙 Voice</span></>} */}
       </div>
+
+      {voiceSettingsOpen && <VoiceSettings onClose={() => setVoiceSettingsOpen(false)} />}
     </div>
   );
 }

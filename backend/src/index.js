@@ -26,6 +26,7 @@ import customFieldsRouter from './routes/custom-fields.js';
 import dependenciesRouter from './routes/dependencies.js';
 import channelsRouter     from './routes/channels.js';
 import mediaRouter        from './routes/media.js';
+import elevenLabsRouter   from './routes/elevenlabs.js';
 
 const app = express();
 
@@ -76,6 +77,7 @@ app.use('/api/v1/approvals',    approvalsRouter);
 app.use('/api/v1/activity',     activityRouter);
 app.use('/api/v1/channels',     channelsRouter);
 app.use('/api/v1/media',        mediaRouter);
+app.use('/api/v1/elevenlabs',   elevenLabsRouter);
 
 // Cross-cutting routers — these mount paths under both /tasks/:id and
 // top-level (e.g. /comments/:id). They use express params from the request URL.

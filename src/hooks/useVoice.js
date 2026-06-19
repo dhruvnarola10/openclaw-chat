@@ -14,6 +14,8 @@
 //   • Silence detection auto-stops listening after ~1.5 s of quiet.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { speakWithElevenLabs } from './useElevenLabs.js';
+import { voiceSettings } from '../utils/voiceSettings.js';
 
 // Public CDN-hosted small English model (~40 MB, GitHub Pages, CORS open).
 // Override via VITE_VOSK_MODEL_URL if you self-host.
@@ -114,34 +116,37 @@ export function useVoice({ onTranscript }) {
   // ── TTS ──────────────────────────────────────────────────────────────
 
   const speak = useCallback((text) => {
-    if (!SS) return;
-    SS.cancel();
-    clearInterval(keepAliveRef.current);
-
     const clean = stripMarkdown(text);
     if (!clean) return;
 
     setVoiceState('speaking');
-    const utt = new SpeechSynthesisUtterance(clean);
-    utt.voice  = cachedVoice;
-    utt.rate   = 1.05;
-    utt.pitch  = 1.0;
-    utt.volume = 1.0;
 
-    // Chrome silently stops synthesis after ~15s — pause/resume to keep alive.
-    utt.onstart = () => {
-      keepAliveRef.current = setInterval(() => {
-        if (SS.speaking) { SS.pause(); SS.resume(); }
-      }, 10000);
-    };
     const done = () => {
       clearInterval(keepAliveRef.current);
       if (stateRef.current === 'speaking') setVoiceState('idle');
     };
-    utt.onend   = done;
-    utt.onerror = done;
 
-    SS.speak(utt);
+    const speakBrowser = () => {
+      if (!SS) { done(); return; }
+      SS.cancel();
+      clearInterval(keepAliveRef.current);
+      const utt = new SpeechSynthesisUtterance(clean);
+      utt.voice  = cachedVoice;
+      utt.rate   = 1.05; utt.pitch = 1.0; utt.volume = 1.0;
+      utt.onstart = () => {
+        keepAliveRef.current = setInterval(() => { if (SS.speaking) { SS.pause(); SS.resume(); } }, 10000);
+      };
+      utt.onend = done; utt.onerror = done;
+      SS.speak(utt);
+    };
+
+    // Prefer ElevenLabs natural voice when configured; else browser TTS.
+    if (voiceSettings.isConfigured()) {
+      SS?.cancel();
+      speakWithElevenLabs(clean).then((ok) => { if (ok) done(); else speakBrowser(); });
+      return;
+    }
+    speakBrowser();
   }, []);
 
   const stopSpeaking = useCallback(() => {

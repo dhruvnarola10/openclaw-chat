@@ -27,6 +27,9 @@ export const env = {
   gatewayToken:  required('GATEWAY_TOKEN'),
   allowedOrigins: (process.env.ALLOWED_ORIGINS ?? '')
     .split(',').map((s) => s.trim()).filter(Boolean),
+  // Platform-default ElevenLabs key — used when a user hasn't supplied
+  // their own. Lives server-side so it's never shipped in the browser bundle.
+  elevenLabsApiKey: process.env.ELEVENLABS_API_KEY ?? '',
 };
 
 /** Throw if APP_TOKEN isn't long enough for production. Called by the API. */

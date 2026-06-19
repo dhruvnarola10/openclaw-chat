@@ -13,6 +13,8 @@
 // 1.5 s with no new transcript activity after at least one final result.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { speakWithElevenLabs } from './useElevenLabs.js';
+import { voiceSettings } from '../utils/voiceSettings.js';
 
 const SR = typeof window !== 'undefined'
   ? (window.SpeechRecognition || window.webkitSpeechRecognition)
@@ -299,17 +301,9 @@ export function useTalk({ onTranscript }) {
   // ── TTS — speak the assistant reply, then auto-loop back to listening ──
 
   const speak = useCallback((text) => {
-    log(`speak() called, len=${(text || '').length}, active=${activeRef.current}, hasSS=${!!SS}`);
+    log(`speak() called, len=${(text || '').length}, active=${activeRef.current}`);
     if (!activeRef.current) { log('speak: skip (not active)'); return; }
     clearTimeout(silenceTimerRef.current);
-
-    if (!SS || !text) {
-      log('speak: no SS or empty text → restart listen');
-      restartRef.current = setTimeout(startListening, 100);
-      return;
-    }
-    SS.cancel();
-    clearInterval(keepAliveRef.current);
 
     const cleaned = stripMarkdown(text);
     if (!cleaned) {
@@ -318,30 +312,11 @@ export function useTalk({ onTranscript }) {
       return;
     }
 
-    log(`speak: SS.speak() "${cleaned.slice(0, 50)}"`);
-    setState('speaking');
-    setAssistantSpeaking(cleaned);
-
-    const utt   = new SpeechSynthesisUtterance(cleaned);
-    utt.voice   = cachedVoice;
-    utt.rate    = 1.05;
-    utt.pitch   = 1.0;
-    utt.volume  = 1.0;
-
-    // Chrome silently stops synthesis after ~15s — pause/resume keeps it alive.
-    utt.onstart = () => {
-      keepAliveRef.current = setInterval(() => {
-        if (SS.speaking) { SS.pause(); SS.resume(); }
-      }, 10000);
-    };
-
+    // Shared end-of-reply handler — loop back to listening.
     const done = () => {
       clearInterval(keepAliveRef.current);
       setAssistantSpeaking('');
       if (activeRef.current) {
-        // Fresh turn after the reply — clear buffers (startListening no
-        // longer does, so it can preserve transcript across mid-turn
-        // Android restarts).
         committedRef.current = '';
         finalRef.current = '';
         liveRef.current  = '';
@@ -352,11 +327,42 @@ export function useTalk({ onTranscript }) {
         setState('idle');
       }
     };
-    utt.onend   = done;
-    utt.onerror = done;
 
-    SS.speak(utt);
-  }, [startListening]);
+    setState('speaking');
+    setAssistantSpeaking(cleaned);
+
+    // Browser speechSynthesis fallback — used when ElevenLabs isn't
+    // configured or its request fails. Robotic but always available.
+    const speakBrowser = () => {
+      if (!SS) { log('speak: no SS → restart'); done(); return; }
+      SS.cancel();
+      clearInterval(keepAliveRef.current);
+      log(`speak: browser TTS "${cleaned.slice(0, 50)}"`);
+      const utt  = new SpeechSynthesisUtterance(cleaned);
+      utt.voice  = cachedVoice;
+      utt.rate   = 1.05; utt.pitch = 1.0; utt.volume = 1.0;
+      utt.onstart = () => {
+        keepAliveRef.current = setInterval(() => { if (SS.speaking) { SS.pause(); SS.resume(); } }, 10000);
+      };
+      utt.onend = done; utt.onerror = done;
+      SS.speak(utt);
+    };
+
+    // Prefer ElevenLabs (natural voice) when the user has configured a key.
+    // The promise resolves true only after playback finishes; false on any
+    // failure → fall back to the browser voice. Using the promise (not an
+    // onEnd callback) avoids double-firing the loop-back.
+    if (voiceSettings.isConfigured()) {
+      log('speak: ElevenLabs TTS');
+      SS?.cancel();
+      speakWithElevenLabs(cleaned).then((ok) => {
+        if (ok) { done(); }
+        else    { log('speak: ElevenLabs failed → browser fallback'); speakBrowser(); }
+      });
+      return;
+    }
+    speakBrowser();
+  }, [startListening, log]);
 
   // ── Toggle the loop ────────────────────────────────────────────────
 
