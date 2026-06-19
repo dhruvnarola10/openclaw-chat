@@ -28,17 +28,44 @@ function resolveKey(req) {
 }
 
 // ── List voices ───────────────────────────────────────────────────────────
+// The legacy /v1/voices returns only a partial set. /v2/voices paginates
+// (page_size up to 100) and returns the full library — we loop through all
+// pages so the user sees every voice they have access to.
 router.get('/voices', async (req, res, next) => {
   try {
     const key = resolveKey(req);
     if (!key) return res.status(400).json({ error: { code: 'NO_KEY', message: 'No ElevenLabs API key' } });
-    const r = await fetch(`${EL_BASE}/voices`, { headers: { 'xi-api-key': key } });
-    const body = await r.text();
-    if (!r.ok) {
-      return res.status(r.status === 401 ? 401 : 502)
-        .json({ error: { code: 'UPSTREAM', message: `elevenlabs voices ${r.status}`, detail: body.slice(0, 300) } });
+
+    const all = [];
+    let pageToken = '';
+    let guard = 0;
+    while (guard < 20) {            // safety cap (20 * 100 = 2000 voices)
+      guard += 1;
+      const qs = new URLSearchParams({ page_size: '100' });
+      if (pageToken) qs.set('next_page_token', pageToken);
+      const r = await fetch(`${EL_BASE.replace('/v1', '/v2')}/voices?${qs.toString()}`, {
+        headers: { 'xi-api-key': key },
+      });
+      if (!r.ok) {
+        // Fall back to the legacy endpoint on the first page if v2 is unavailable.
+        if (guard === 1) {
+          const legacy = await fetch(`${EL_BASE}/voices`, { headers: { 'xi-api-key': key } });
+          const body = await legacy.text();
+          if (!legacy.ok) {
+            return res.status(legacy.status === 401 ? 401 : 502)
+              .json({ error: { code: 'UPSTREAM', message: `elevenlabs voices ${legacy.status}`, detail: body.slice(0, 300) } });
+          }
+          return res.type('application/json').send(body);
+        }
+        break;
+      }
+      const json = await r.json();
+      const page = json?.voices ?? [];
+      all.push(...page);
+      if (json?.has_more && json?.next_page_token) pageToken = json.next_page_token;
+      else break;
     }
-    res.type('application/json').send(body);
+    res.json({ voices: all });
   } catch (e) { next(e); }
 });
 

@@ -125,12 +125,12 @@ export function useTalk({ onTranscript }) {
   const [error, setError]                         = useState('');
   // On-screen debug log — same overlay as useRealtimeTalk uses, so users
   // can screenshot what happened without remote-inspecting the phone.
-  const [debugLog, setDebugLog]                   = useState([]);
-  const log = useCallback((line) => {
-    const stamp = new Date().toISOString().slice(11, 19);
-    setDebugLog((prev) => [...prev.slice(-24), `${stamp} ${line}`]);
-    console.log('[webspeech]', line);
-  }, []);
+  // const [debugLog, setDebugLog]                   = useState([]);
+  // const log = useCallback((line) => {
+  //   const stamp = new Date().toISOString().slice(11, 19);
+  //   setDebugLog((prev) => [...prev.slice(-24), `${stamp} ${line}`]);
+  //   console.log('[webspeech]', line);
+  // }, []);
 
   const recRef          = useRef(null);
   const committedRef    = useRef('');     // final transcript from ENDED sessions this turn
@@ -397,7 +397,6 @@ export function useTalk({ onTranscript }) {
     setError('');
     activeRef.current = true;
     setTalkActive(true);
-    setDebugLog([]);
     // Fresh turn — clear any stale transcript from a previous session.
     committedRef.current = '';
     finalRef.current = '';
@@ -427,6 +426,5 @@ export function useTalk({ onTranscript }) {
     error,
     toggle,
     speak,
-    debugLog,
   };
 }

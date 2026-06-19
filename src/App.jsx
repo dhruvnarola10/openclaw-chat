@@ -2,8 +2,9 @@
 // shared hooks (config, threads, gateway, models). Each view receives
 // only the slice of state it needs.
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth }     from './hooks/useAuth.js';
+import { voiceSettings } from './utils/voiceSettings.js';
 import { useConfig }   from './hooks/useConfig.js';
 import { useGateway }  from './hooks/useGateway.js';
 import { useModels }   from './hooks/useModels.js';
@@ -39,6 +40,11 @@ export default function App() {
 
 function Authed({ onLogout, user }) {
   const [view, setView] = useState('overview');
+
+  // Pull the user's saved voice settings from the backend so the same
+  // account has the same ElevenLabs config on every device they log into.
+  useEffect(() => { voiceSettings.hydrateFromServer(); }, []);
+
   // When set, ChatView will join this session on next render and clear it.
   // Used by CronView's run-history "Open in chat" deep-link.
   const [pendingJoinKey, setPendingJoinKey] = useState(null);

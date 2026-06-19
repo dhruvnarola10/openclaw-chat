@@ -54,6 +54,34 @@ export const voiceSettings = {
     } catch { /* ignore */ }
   },
 
+  /**
+   * Pull the user's saved settings from the backend into localStorage so the
+   * same account has the same voice config on every device. Call once after
+   * login (App boot). localStorage stays the synchronous source for speak().
+   */
+  async hydrateFromServer() {
+    try {
+      const { api } = await import('../hooks/useApi.js');
+      const row = await api.get('/voice-settings');
+      if (row && (row.apiKey || row.voiceId || row.modelId)) {
+        voiceSettings.set({
+          apiKey:  row.apiKey  ?? '',
+          voiceId: row.voiceId ?? '',
+          modelId: row.modelId ?? '',
+        });
+      }
+    } catch { /* offline / no row — keep local */ }
+  },
+
+  /** Persist to backend (per-user) AND localStorage so it syncs everywhere. */
+  async saveToServer({ apiKey, voiceId, modelId } = {}) {
+    voiceSettings.set({ apiKey, voiceId, modelId });
+    try {
+      const { api } = await import('../hooks/useApi.js');
+      await api.put('/voice-settings', { apiKey: apiKey ?? '', voiceId: voiceId ?? '', modelId: modelId ?? '' });
+    } catch { /* network — local copy already saved */ }
+  },
+
   /** True when ElevenLabs is usable: a voice is chosen AND either the
    *  platform key is enabled or the user supplied their own key. */
   isConfigured() {

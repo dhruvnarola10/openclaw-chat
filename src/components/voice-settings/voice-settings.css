@@ -70,8 +70,47 @@
 }
 .vs-summary { font-size: 12.5px; color: var(--text-muted); }
 
-@media (max-width: 560px) {
-  .vs-modal { padding: 16px; }
-  .vs-key-row { flex-direction: column; }
-  .vs-footer { flex-direction: column; align-items: stretch; }
+/* ── Mobile: bottom-sheet style, single-column, bigger touch targets ── */
+@media (max-width: 600px) {
+  .vs-modal {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 92dvh;
+    margin: 0;
+    padding: 18px 16px;
+    /* Anchor to the bottom of the screen like a native sheet. */
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .vs-head h2 { font-size: 16px; }
+
+  /* Key entry stacks; full-width verify button. */
+  .vs-key-row { flex-direction: column; gap: 8px; }
+  .vs-key-row .ov-btn { width: 100%; justify-content: center; padding: 10px; }
+
+  /* One column for model + voice cards so they're tap-friendly. */
+  .vs-model-grid { grid-template-columns: 1fr; }
+  .vs-voice-grid { grid-template-columns: 1fr 1fr; max-height: 46dvh; }
+
+  /* Bigger preview / category hit areas (≥36px for touch). */
+  .vs-preview { width: 32px; height: 32px; }
+  .vs-cat { padding: 7px 12px; font-size: 12px; }
+  .vs-voice-card, .vs-model-card { padding: 12px; }
+
+  /* Footer: summary on top, full-width action buttons below. */
+  .vs-footer { flex-direction: column; align-items: stretch; gap: 10px; }
+  .vs-footer > div:last-child { display: flex; gap: 8px; }
+  .vs-footer .ov-btn { flex: 1; justify-content: center; padding: 11px; }
+  .vs-summary { text-align: center; }
+}
+
+/* Very small phones — single-column voice grid too. */
+@media (max-width: 380px) {
+  .vs-voice-grid { grid-template-columns: 1fr; }
 }

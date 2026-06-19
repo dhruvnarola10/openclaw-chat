@@ -100,8 +100,10 @@ export function useElevenLabs() {
     } catch { /* ignore preview errors */ }
   }, [apiKey, modelId]);
 
+  // Save to the backend (per-user) AND localStorage so the same account
+  // gets the same config on every device (PC + mobile).
   const saveSettings = useCallback(() => {
-    voiceSettings.set({ apiKey, voiceId, modelId });
+    voiceSettings.saveToServer({ apiKey, voiceId, modelId });
   }, [apiKey, voiceId, modelId]);
 
   return {

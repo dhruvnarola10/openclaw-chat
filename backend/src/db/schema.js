@@ -276,3 +276,16 @@ export const activityLog = pgTable('activity_log', {
 }, (t) => ({
   createdAtIdx: index('activity_log_created_at_idx').on(t.createdAt),
 }));
+
+// ── Per-user voice (ElevenLabs) settings ─────────────────────────────────
+// Synced server-side so the same account gets the same voice config on every
+// device (PC + mobile). One row per user. `apiKey` is the user's own
+// ElevenLabs key — never logged.
+
+export const userVoiceSettings = pgTable('user_voice_settings', {
+  userId:    uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  apiKey:    text('api_key'),
+  voiceId:   text('voice_id'),
+  modelId:   text('model_id'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
