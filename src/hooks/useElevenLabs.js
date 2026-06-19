@@ -20,6 +20,32 @@ function authHeaders(elevenKey) {
   return h;
 }
 
+// Turn a failed proxy response into a plain-language message (no status codes
+// shown to the user). Reads the backend's { error: { code, message } } body
+// when present, then maps by HTTP status.
+async function friendlyError(resp, key) {
+  let code = '';
+  try { code = (await resp.clone().json())?.error?.code ?? ''; } catch { /* not json */ }
+  switch (resp.status) {
+    case 400:
+      return code === 'NO_KEY' || !key
+        ? 'Enter your ElevenLabs API key, then tap Verify & Load.'
+        : 'That request was rejected — double-check your API key.';
+    case 401:
+    case 403:
+      return "That API key isn't valid. Copy it again from elevenlabs.io and retry.";
+    case 404:
+      return 'Voice service not reachable. The server may need a moment — try again shortly.';
+    case 429:
+      return 'ElevenLabs rate limit reached. Wait a moment and try again.';
+    case 502:
+    case 503:
+      return "Couldn't reach ElevenLabs right now. Please try again in a moment.";
+    default:
+      return 'Something went wrong loading voices. Please try again.';
+  }
+}
+
 export function useElevenLabs() {
   const initial = voiceSettings.get();
   const [apiKey,  setApiKey]  = useState(initial.apiKey);
@@ -45,9 +71,8 @@ export function useElevenLabs() {
         fetch(`${BASE}/elevenlabs/voices`, { headers: authHeaders(useKey) }),
         fetch(`${BASE}/elevenlabs/models`, { headers: authHeaders(useKey) }),
       ]);
-      if (vRes.status === 401 || mRes.status === 401) throw new Error('Invalid API key (401).');
-      if (!vRes.ok) throw new Error(`voices failed (${vRes.status})`);
-      if (!mRes.ok) throw new Error(`models failed (${mRes.status})`);
+      const bad = !vRes.ok ? vRes : (!mRes.ok ? mRes : null);
+      if (bad) throw new Error(await friendlyError(bad, useKey));
       const vJson = await vRes.json();
       const mJson = await mRes.json();
       const vList = vJson?.voices ?? (Array.isArray(vJson) ? vJson : []);
