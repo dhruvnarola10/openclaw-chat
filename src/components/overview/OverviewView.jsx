@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, AlertTriangle, Eye, EyeOff, LogOut, Loader2, Monitor, Moon,
-  Plug, PowerOff, RefreshCw, RotateCw, Sun, Trash2,
+  Plug, PowerOff, RefreshCw, RotateCw, Settings as SettingsIcon, Sun, Trash2,
 } from 'lucide-react';
 import { useOverview } from '../../hooks/useOverview.js';
 import { ago, compactNumber, parseSessionKey } from '../../utils/format.js';
@@ -252,17 +252,28 @@ export default function OverviewView({ config, gateway, theme = 'dark', onCycleT
 
 function GatewayAccessCard({ config, gateway }) {
   const [showToken, setShowToken] = useState(false);
+  const [editing, setEditing]     = useState(false);
   const wsUrl = useMemo(() => {
     if (typeof window === 'undefined') return '';
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     return `${proto}://${window.location.host}/ws`;
   }, []);
 
+  // Masked token for the read-only view — show only the last 4 chars.
+  const maskedToken = config.token
+    ? (showToken ? config.token : `${'•'.repeat(Math.max(0, config.token.length - 4))}${config.token.slice(-4)}`)
+    : '—';
+
   return (
     <section className="ov-card">
-      <div className="ov-card-head">
-        <h2>Gateway Access</h2>
-        <p>Where the dashboard connects and how it authenticates.</p>
+      <div className="ov-card-head ov-card-head--row">
+        <div>
+          <h2>Gateway Access</h2>
+          <p>Where the dashboard connects and how it authenticates.</p>
+        </div>
+        <button className="ov-btn" onClick={() => setEditing(true)} title="Edit gateway connection">
+          <SettingsIcon size={14} /> <span>Settings</span>
+        </button>
       </div>
 
       <div className="ov-form">
@@ -272,12 +283,7 @@ function GatewayAccessCard({ config, gateway }) {
 
         <Field label="Gateway Token">
           <div className="ov-input-wrap">
-            <input
-              className="ov-input"
-              type={showToken ? 'text' : 'password'}
-              value={config.token || ''}
-              onChange={(e) => config.setToken(e.target.value)}
-            />
+            <input className="ov-input" type="text" value={maskedToken} readOnly />
             <button
               type="button"
               className="ov-eye"
@@ -298,15 +304,64 @@ function GatewayAccessCard({ config, gateway }) {
         </Field>
 
         <Field label="Agent ID">
-          <input
-            className="ov-input"
-            value={config.agentId || ''}
-            onChange={(e) => config.setAgentId(e.target.value)}
-          />
+          <input className="ov-input" value={config.agentId || ''} readOnly />
         </Field>
       </div>
 
+      {editing && <GatewaySettingsModal config={config} onClose={() => setEditing(false)} />}
     </section>
+  );
+}
+
+// Editable gateway connection — token + agent id. Opens from the Settings
+// button on the Gateway Access card; the card itself stays read-only.
+function GatewaySettingsModal({ config, onClose }) {
+  const [token, setToken]     = useState(config.token || '');
+  const [agentId, setAgentId] = useState(config.agentId || '');
+  const [showToken, setShowToken] = useState(false);
+
+  const save = () => {
+    config.setToken(token.trim());
+    config.setAgentId(agentId.trim() || 'main');
+    onClose();
+  };
+
+  return (
+    <div className="dialog-overlay" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ minWidth: 440 }}>
+        <h3>Gateway settings</h3>
+        <p style={{ marginBottom: 14, fontSize: 13, color: 'var(--text-muted)' }}>
+          Update how the dashboard authenticates with your OpenClaw gateway.
+        </p>
+
+        <div className="ov-field" style={{ marginBottom: 12 }}>
+          <label className="ov-label">Gateway Token</label>
+          <div className="ov-input-wrap">
+            <input
+              className="ov-input"
+              type={showToken ? 'text' : 'password'}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button type="button" className="ov-eye" onClick={() => setShowToken((v) => !v)} title={showToken ? 'Hide' : 'Show'}>
+              {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </div>
+
+        <div className="ov-field">
+          <label className="ov-label">Agent ID</label>
+          <input className="ov-input" value={agentId} onChange={(e) => setAgentId(e.target.value)} placeholder="main" />
+        </div>
+
+        <div className="dialog-actions" style={{ marginTop: 18 }}>
+          <button className="dialog-cancel" onClick={onClose}>Cancel</button>
+          <button className="dialog-confirm" onClick={save}>Save</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

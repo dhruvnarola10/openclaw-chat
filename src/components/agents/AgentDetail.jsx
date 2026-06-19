@@ -15,7 +15,7 @@
 // openclaw.json and we don't want to risk corrupting it blind. Overview
 // (model) and Files are fully editable via confirmed agents.* RPCs.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Check, Loader2, RefreshCw, Save, Wrench, Zap,
   Plug, Clock, Eye, EyeOff,
@@ -173,10 +173,16 @@ function FilesTab({ agentId, gateway }) {
   const fileName = `${name}.md`;
   const dirty = content !== loaded;
 
+  // Keep gateway in a ref so `load` doesn't change identity every time the
+  // socket pushes an event (status/sessions/etc). Without this, the load
+  // effect re-ran constantly → re-blurred the content and discarded edits.
+  const gatewayRef = useRef(gateway);
+  gatewayRef.current = gateway;
+
   const load = useCallback(async (n) => {
     setLoading(true); setToast(''); setPreview(false); setRevealed(false);
     try {
-      const r = await gateway.request('agents.files.get', { agentId, name: `${n}.md` });
+      const r = await gatewayRef.current.request('agents.files.get', { agentId, name: `${n}.md` });
       const c = r?.file?.content ?? '';
       setContent(c); setLoaded(c);
       if (r?.workspace) setWorkspace(r.workspace);
@@ -186,9 +192,12 @@ function FilesTab({ agentId, gateway }) {
       if (/not.?found|missing/i.test(e.message)) setToast('(file does not exist yet — saving creates it)');
       else setToast(e.message);
     } finally { setLoading(false); }
-  }, [agentId, gateway]);
+  }, [agentId]);
 
-  useEffect(() => { load(name); }, [name, load]);
+  // Load only when the selected file or agent changes — NOT on every gateway
+  // re-render (that was causing the frequent re-blur / reload).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(name); }, [name, agentId]);
 
   const save = async () => {
     setSaving(true); setToast('');

@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth }     from './hooks/useAuth.js';
 import { voiceSettings } from './utils/voiceSettings.js';
+import { load, save }  from './utils/storage.js';
 import { useConfig }   from './hooks/useConfig.js';
 import { useGateway }  from './hooks/useGateway.js';
 import { useModels }   from './hooks/useModels.js';
@@ -39,7 +40,10 @@ export default function App() {
 }
 
 function Authed({ onLogout, user }) {
-  const [view, setView] = useState('overview');
+  // Persist the current view so a browser refresh keeps the user on the same
+  // page instead of bouncing back to Overview.
+  const [view, setViewRaw] = useState(() => load('oc-view', 'overview'));
+  const setView = (v) => { setViewRaw(v); save('oc-view', v); };
 
   // Pull the user's saved voice settings from the backend so the same
   // account has the same ElevenLabs config on every device they log into.
