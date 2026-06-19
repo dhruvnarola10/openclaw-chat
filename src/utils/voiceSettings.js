@@ -7,6 +7,8 @@
 // init — so a settings change takes effect on the next spoken reply with no
 // page reload.
 
+import { api } from '../hooks/useApi.js';
+
 const K_KEY   = 'xi-api-key';
 const K_VOICE = 'xi-voice-id';
 const K_MODEL = 'xi-model-id';
@@ -61,7 +63,6 @@ export const voiceSettings = {
    */
   async hydrateFromServer() {
     try {
-      const { api } = await import('../hooks/useApi.js');
       const row = await api.get('/voice-settings');
       if (row && (row.apiKey || row.voiceId || row.modelId)) {
         voiceSettings.set({
@@ -77,7 +78,6 @@ export const voiceSettings = {
   async saveToServer({ apiKey, voiceId, modelId } = {}) {
     voiceSettings.set({ apiKey, voiceId, modelId });
     try {
-      const { api } = await import('../hooks/useApi.js');
       await api.put('/voice-settings', { apiKey: apiKey ?? '', voiceId: voiceId ?? '', modelId: modelId ?? '' });
     } catch { /* network — local copy already saved */ }
   },
