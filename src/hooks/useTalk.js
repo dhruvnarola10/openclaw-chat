@@ -123,14 +123,10 @@ export function useTalk({ onTranscript }) {
   const [userInterim, setUserInterim]             = useState('');
   const [assistantSpeaking, setAssistantSpeaking] = useState('');
   const [error, setError]                         = useState('');
-  // On-screen debug log — same overlay as useRealtimeTalk uses, so users
-  // can screenshot what happened without remote-inspecting the phone.
-  // const [debugLog, setDebugLog]                   = useState([]);
-  // const log = useCallback((line) => {
-  //   const stamp = new Date().toISOString().slice(11, 19);
-  //   setDebugLog((prev) => [...prev.slice(-24), `${stamp} ${line}`]);
-  //   console.log('[webspeech]', line);
-  // }, []);
+  // Debug overlay removed, but the code still has log() call sites. Keep a
+  // no-op `log` so they don't throw "log is not defined" (which crashes the
+  // whole chat view). Flip the body to console.log to debug voice again.
+  const log = useCallback(() => { /* no-op */ }, []);
 
   const recRef          = useRef(null);
   const committedRef    = useRef('');     // final transcript from ENDED sessions this turn
